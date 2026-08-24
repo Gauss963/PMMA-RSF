@@ -33,23 +33,19 @@ python scripts/run_case.py \
   cases/rsf_0116_hpc.toml
 ```
 
-Submit the default 0.50 mm H200 pilot on NANO4:
+Submit the default 0.50 mm Q4 explicit production case on one H200:
 
 ```bash
 sbatch slurm/PMMA-RSF-GPU.slurm
 ```
 
-After the pilot establishes throughput and peak GPU memory, submit 0.10 mm:
-
-```bash
-sbatch --export=ALL,CASE_FILE=/work/gauss112/tatva/cases/rsf_0116_hpc.toml \
-  slurm/PMMA-RSF-GPU.slurm
-```
-
-The Slurm job is capped at six hours. The runner checkpoints every 20 minutes
-for production (five minutes for the pilot) and exits cleanly about 20 minutes
-before the allocation ends. A checkpoint contains the complete explicit
-integrator state and the exact HDF5 frame indices. Resume an incomplete run with:
+The Slurm allocation is capped at ten hours and requests one H200 plus 256 GB
+of host memory. The runner checkpoints every ten minutes and exits cleanly
+about 20 minutes before the allocation ends. Before creating the HDF5 dump it
+requires enough actual filesystem space for the conservative uncompressed
+estimate plus a 50 GB reserve. A checkpoint contains the complete explicit
+integrator state and the exact HDF5 frame indices. Resume a cleanly
+checkpointed run with:
 
 ```bash
 sbatch --export=ALL,CASE_FILE=/work/gauss112/tatva/cases/rsf_0116_hpc.toml,RESUME_DIR=/work/gauss112/tatva/runs/TS0017_case-name \
@@ -94,7 +90,8 @@ unchanged. Loading now stops only when the same station has `slip >= D_c` and
 0-6 mm corner-slip zone while stopping external work shortly after a dynamic
 front leaves the nucleation end.
 
-The completed TPV102 100 m H200 run had 51,252,333 DOFs. The 0.10 mm PMMA
-case has 35,977,904 DOFs (70.2% of TPV102). Exact equal-DOF spacing is about
-0.0838 mm, but its conservative dump estimate is about 1.25 TB with the same
-frame plan, so 0.10 mm is the finest default that respects the 1 TB limit.
+The current Q4 production case uses a 0.50 mm mesh, 1,443,584 displacement
+DOFs, an exact 15 ns step, 36,000 bulk shear frames, and 300,000 high-rate
+interface frames. Its conservative uncompressed estimate is 1.253 TB; the
+calibrated LZF estimate is 1.196 TB and must remain below the configured
+1.20 TB dump limit.

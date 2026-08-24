@@ -17,6 +17,7 @@ from tatva.pmma.estimate import estimate_case_size
 from tatva.pmma.profiles import build_rate_state_profile, calibrate_state_effect
 from tatva.pmma.profiles import regularized_steady_friction
 from tatva.pmma.runner import (
+    _validate_run_storage,
     allocate_run_directory,
     make_case,
     make_run_config,
@@ -52,6 +53,38 @@ def test_run_directory_sequence_continues_from_highest_ts_id(tmp_path):
     allocated = allocate_run_directory(tmp_path, "next")
 
     assert allocated.name == "TS0022_next"
+
+
+def test_storage_preflight_uses_uncompressed_remaining_size_and_reserve(
+    tmp_path, monkeypatch
+):
+    class Usage:
+        free = 129
+
+    monkeypatch.setattr("tatva.pmma.runner.shutil.disk_usage", lambda _: Usage())
+    estimate = {"estimated_uncompressed_bytes": 100}
+
+    with pytest.raises(OSError, match="Insufficient free space"):
+        _validate_run_storage(
+            tmp_path,
+            estimate,
+            existing_dump_bytes=20,
+            reserve_bytes=50,
+        )
+
+    Usage.free = 130
+    report = _validate_run_storage(
+        tmp_path,
+        estimate,
+        existing_dump_bytes=20,
+        reserve_bytes=50,
+    )
+    assert report == {
+        "available_bytes": 130,
+        "estimated_remaining_uncompressed_bytes": 80,
+        "reserve_bytes": 50,
+        "required_bytes": 130,
+    }
 
 
 def test_standard_rsf_calibration_recovers_former_lsw_drop():

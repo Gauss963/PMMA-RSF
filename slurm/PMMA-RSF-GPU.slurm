@@ -8,7 +8,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=12
 #SBATCH --gres=gpu:1
-#SBATCH --mem=200G
+#SBATCH --mem=256G
 #SBATCH --time=10:00:00
 #SBATCH --signal=B:USR1@600
 #SBATCH --mail-type=END,FAIL
@@ -106,6 +106,27 @@ done
 set -e
 trap - USR1 TERM
 if [[ "$simulation_status" -ne 0 ]]; then
+  "$PYTHON" - "$RUN_DIR/status.json" "$simulation_status" <<'PY'
+from datetime import datetime, timezone
+import json
+from pathlib import Path
+import sys
+
+status_path = Path(sys.argv[1])
+exit_code = int(sys.argv[2])
+try:
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+except (FileNotFoundError, json.JSONDecodeError):
+    status = {}
+status.update(
+    status="failed",
+    failed_utc=datetime.now(timezone.utc).isoformat(),
+    native_exit_code=exit_code,
+    error=f"Simulation process exited with native status {exit_code}.",
+)
+status_path.parent.mkdir(parents=True, exist_ok=True)
+status_path.write_text(json.dumps(status, indent=2), encoding="utf-8")
+PY
   echo "Simulation exited with status $simulation_status" >&2
   exit "$simulation_status"
 fi

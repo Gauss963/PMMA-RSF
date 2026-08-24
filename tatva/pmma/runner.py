@@ -157,6 +157,7 @@ def make_run_config(config: PMMACaseConfig) -> RunConfig:
 
 RUN_SEQUENCE_PREFIX = "TS"
 FIRST_RUN_NUMBER = 17
+MINIMUM_FREE_SPACE_RESERVE_BYTES = 50_000_000_000
 
 
 def allocate_run_directory(root: Path, label: str) -> Path:
@@ -179,6 +180,36 @@ def allocate_run_directory(root: Path, label: str) -> Path:
             number += 1
             continue
         return candidate
+
+
+def _validate_run_storage(
+    path: Path,
+    estimate: dict[str, Any],
+    *,
+    existing_dump_bytes: int = 0,
+    reserve_bytes: int = MINIMUM_FREE_SPACE_RESERVE_BYTES,
+) -> dict[str, int]:
+    """Require enough free space for the conservative remaining dump size."""
+    estimated_uncompressed_bytes = int(estimate["estimated_uncompressed_bytes"])
+    remaining_dump_bytes = max(
+        estimated_uncompressed_bytes - int(existing_dump_bytes), 0
+    )
+    available_bytes = int(shutil.disk_usage(path).free)
+    required_bytes = remaining_dump_bytes + int(reserve_bytes)
+    report = {
+        "available_bytes": available_bytes,
+        "estimated_remaining_uncompressed_bytes": remaining_dump_bytes,
+        "reserve_bytes": int(reserve_bytes),
+        "required_bytes": required_bytes,
+    }
+    if available_bytes < required_bytes:
+        raise OSError(
+            "Insufficient free space for simulation dump: "
+            f"{available_bytes / 1.0e12:.3f} TB available, "
+            f"{required_bytes / 1.0e12:.3f} TB required "
+            "(conservative remaining uncompressed dump plus reserve)."
+        )
+    return report
 
 
 def preflight(config: PMMACaseConfig) -> dict[str, Any]:
@@ -248,7 +279,10 @@ def run_case(
     if time_limit_seconds is not None and time_limit_seconds <= 0.0:
         raise ValueError("time_limit_seconds must be positive.")
 
+    run_root = run_root.expanduser().resolve()
     if run_dir is None:
+        run_root.mkdir(parents=True, exist_ok=True)
+        storage = _validate_run_storage(run_root, estimate)
         run_dir = allocate_run_directory(run_root, label or config.name)
     else:
         run_dir = run_dir.expanduser().resolve()
@@ -267,6 +301,17 @@ def run_case(
                     "The requested run directory already contains simulation data: "
                     + ", ".join(str(path) for path in conflicting)
                 )
+        existing_dump = run_dir / "data" / "simulation.h5"
+        storage = _validate_run_storage(
+            run_dir,
+            estimate,
+            existing_dump_bytes=(
+                existing_dump.stat().st_size
+                if resume and existing_dump.exists()
+                else 0
+            ),
+        )
+    estimate["storage_preflight"] = storage
     data_dir = run_dir / "data"
     stats_dir = run_dir / "stats"
     input_dir = run_dir / "input"
