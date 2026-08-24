@@ -8,7 +8,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=12
 #SBATCH --gres=gpu:1
-#SBATCH --mem=256G
+#SBATCH --mem=200G
 #SBATCH --time=10:00:00
 #SBATCH --signal=B:USR1@600
 #SBATCH --mail-type=END,FAIL
