@@ -1,0 +1,928 @@
+"""Implementation-level tests for ``tatva.sparse.tracer``.
+
+These tests target the tracer's internal machinery directly — the primitive handlers in
+``Handlers``, the nonlinear classification, the JAXpr traversal, the higher-order handlers
+(``scan``/``map``/``cond``/``pjit``), the trial/test split logic and the small data
+structures — using tiny hand-written functions whose exact Hessian / Jacobian pattern is
+knowable via ``jax.hessian`` / ``jax.jacobian``. This complements ``test_sparse_tracer.py``,
+which exercises the tracer end-to-end through the FEM stack (Operator/Compound/Lifter).
+
+The core contract under test:
+  * **no false negatives** — the traced pattern is always a superset of the true pattern
+    (the property that makes it safe for graph-coloring based sparse AD), and
+  * **structural symmetry** — an energy Hessian pattern is always symmetric.
+
+``cond``/``switch`` branches are traversed (couplings created inside a branch are
+captured). One genuine soundness boundary remains documented as ``xfail``:
+  * a data-dependent *carry* coupling in ``lax.scan``.
+"""
+
+import warnings
+
+import jax
+import jax.numpy as jnp
+import numpy as np
+import pytest
+import scipy.sparse as sps
+from jax_autovmap import autovmap
+
+from tatva.sparse import pattern_from_energy, pattern_from_virtual_work
+from tatva.sparse.tracer import (
+    CouplingAccumulator,
+    SparseDepSet,
+    _unwrap_jit,
+)
+
+jax.config.update("jax_enable_x64", True)
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+
+def nz_set(m) -> set[tuple[int, int]]:
+    """CSR/array → set of ``(row, col)`` nonzero index tuples."""
+    m = sps.csr_matrix(m)
+    r, c = m.nonzero()
+    return set(zip(r.tolist(), c.tolist()))
+
+
+def dense_hessian_pattern(f, n: int, n_samples: int = 6, seed: int = 0) -> set:
+    """True structural Hessian pattern, unioned over several random evaluation points.
+
+    Unioning over points recovers the point-independent structural pattern while avoiding
+    accidental zeros at any single point. The union is always a subset of the structural
+    pattern, so ``dense ⊆ traced`` is the faithful no-false-negative check.
+    """
+    rng = np.random.default_rng(seed)
+    pattern: set = set()
+    for _ in range(n_samples):
+        x = jnp.asarray(rng.normal(size=n))
+        H = np.asarray(jax.hessian(f)(x))
+        rows, cols = np.where(np.abs(H) > 1e-9)
+        pattern |= set(zip(rows.tolist(), cols.tolist()))
+    return pattern
+
+
+def dense_vw_pattern(g, n: int, n_samples: int = 6, seed: int = 0) -> set:
+    """True tangent-stiffness pattern K_ij = d/du_j (dG/dw_i), unioned over points."""
+
+    def R_fn(u):
+        return jax.grad(g, argnums=0)(jnp.zeros(n), u)
+
+    rng = np.random.default_rng(seed)
+    pattern: set = set()
+    for _ in range(n_samples):
+        x = jnp.asarray(rng.normal(size=n))
+        K = np.asarray(jax.jacobian(R_fn)(x))
+        rows, cols = np.where(np.abs(K) > 1e-9)
+        pattern |= set(zip(rows.tolist(), cols.tolist()))
+    return pattern
+
+
+# ---------------------------------------------------------------------------
+# A. property battery: one minimal energy per handler family
+# ---------------------------------------------------------------------------
+
+_A = np.random.default_rng(1).normal(size=(6, 6))
+_A = jnp.asarray(_A + _A.T)  # symmetric → dense quadratic form
+_PERM = jnp.array([2, 0, 1, 1, 3, 5])
+_LO = jnp.array([0, 1, 2])
+_HI = jnp.array([3, 4, 5])
+_SCATTER_IDX = jnp.array([0, 1, 2, 0, 1, 2])
+
+
+# each case: (id, fn, n_dofs, exact) where ``exact`` asserts the traced pattern equals
+# the true structural pattern (otherwise only the no-false-negative superset is required)
+ENERGY_CASES = [
+    # --- scalar nonlinear handlers ---
+    ("unary_sin_diagonal", lambda u: jnp.sum(jnp.sin(u)), 6, True),
+    ("unary_dense_via_reduce", lambda u: jnp.sin(jnp.sum(u)), 6, True),
+    ("unary_exp", lambda u: jnp.sum(jnp.exp(u)), 6, True),
+    ("unary_log_safe", lambda u: jnp.sum(jnp.log(u**2 + 1.0)), 6, False),
+    ("unary_tanh", lambda u: jnp.sum(jnp.tanh(u)), 6, True),
+    ("binary_mul_adjacent", lambda u: jnp.sum(u[:-1] * u[1:]), 6, False),
+    ("binary_div_adjacent", lambda u: jnp.sum(u[:-1] / (u[1:] ** 2 + 1.0)), 6, False),
+    ("integer_pow2_diagonal", lambda u: jnp.sum(u**2), 6, True),
+    ("integer_pow3_diagonal", lambda u: jnp.sum(u**3), 6, True),
+    # --- contraction / reduction ---
+    ("dot_general_quadratic_form", lambda u: u @ _A @ u, 6, True),
+    ("reduce_sum_then_square", lambda u: jnp.sum(u.reshape(2, 3).sum(0) ** 2), 6, True),
+    # --- index-routing structural handlers ---
+    (
+        "reshape_transpose",
+        lambda u: jnp.sum(jnp.sin(u.reshape(2, 3).T.reshape(-1))),
+        6,
+        True,
+    ),
+    ("pad", lambda u: jnp.sum(jnp.sin(jnp.pad(u, (1, 1)))), 6, True),
+    (
+        "broadcast_in_dim",
+        lambda u: jnp.sum(jnp.sin(jnp.broadcast_to(u[:, None], (6, 3)))),
+        6,
+        True,
+    ),
+    (
+        "concatenate_duplicate",
+        lambda u: jnp.sum(jnp.sin(jnp.concatenate([u, u]))),
+        6,
+        True,
+    ),
+    ("squeeze", lambda u: jnp.sum(jnp.sin(u[:, None]).squeeze(-1)), 6, True),
+    ("slice_product", lambda u: jnp.sum(u[:3] * u[3:]), 6, False),
+    # --- gather / scatter ---
+    ("gather_permutation", lambda u: jnp.sum(jnp.sin(u[_PERM])), 6, True),
+    ("gather_product", lambda u: jnp.sum(u[_LO] * u[_HI]), 6, False),
+    (
+        "scatter_add_then_square",
+        lambda u: jnp.sum(jnp.zeros(3).at[_SCATTER_IDX].add(u) ** 2),
+        6,
+        True,
+    ),
+    # --- select / where ---
+    ("where_two_branches", lambda u: jnp.sum(jnp.where(u > 0, u**2, u**3)), 6, True),
+    # --- conservative fallbacks (no false negatives, not exact) ---
+    (
+        "dynamic_slice_fallback",
+        lambda u: jnp.sum(jax.lax.dynamic_slice(u, (1,), (3,)) ** 2),
+        6,
+        False,
+    ),
+    # --- higher-order: jit / map / scan(map-like) ---
+    ("nested_jit", jax.jit(lambda u: jnp.sum(u[:-1] * u[1:])), 6, False),
+    ("lax_map_independent", lambda u: jnp.sum(jax.lax.map(lambda x: x**2, u)), 6, True),
+    (
+        "lax_map_batched",
+        lambda u: jnp.sum(jax.lax.map(lambda x: x**2, u, batch_size=2)),
+        6,
+        True,
+    ),
+    (
+        "scan_map_like",
+        lambda u: jnp.sum(jax.lax.scan(lambda c, x: (c, x**2), 0.0, u)[1]),
+        6,
+        True,
+    ),
+]
+
+_ENERGY_IDS = [c[0] for c in ENERGY_CASES]
+
+
+@pytest.mark.parametrize("fn,n,exact", [c[1:] for c in ENERGY_CASES], ids=_ENERGY_IDS)
+def test_energy_no_false_negatives(fn, n, exact):
+    """The traced Hessian pattern must contain every entry of the true pattern."""
+    pat = pattern_from_energy(fn, n)
+    assert dense_hessian_pattern(fn, n) <= nz_set(pat)
+
+
+@pytest.mark.parametrize("fn,n,exact", [c[1:] for c in ENERGY_CASES], ids=_ENERGY_IDS)
+def test_energy_hessian_structurally_symmetric(fn, n, exact):
+    """An energy Hessian pattern is symmetric: the tracer records both (i,j) and (j,i)."""
+    pat = pattern_from_energy(fn, n)
+    assert nz_set(pat) == nz_set(pat.T)
+
+
+@pytest.mark.parametrize(
+    "fn,n",
+    [c[1:3] for c in ENERGY_CASES if c[3]],
+    ids=[c[0] for c in ENERGY_CASES if c[3]],
+)
+def test_energy_exact_pattern(fn, n):
+    """For tight cases the traced pattern equals the true structural pattern exactly."""
+    pat = pattern_from_energy(fn, n)
+    assert nz_set(pat) == dense_hessian_pattern(fn, n)
+
+
+# ---------------------------------------------------------------------------
+# A. fallbacks: linear / constant / zero-dependency → identity
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "fn",
+    [
+        lambda u: 3.0 * jnp.sum(u),  # linear
+        lambda u: 5.0 + 0.0 * u[0],  # constant
+        lambda u: jnp.sum(jnp.floor(u)),  # zero-dependency primitive (floor)
+        lambda u: jnp.sum(u > 0.0),  # comparison → no deps
+    ],
+    ids=["linear", "constant", "floor", "comparison"],
+)
+def test_zero_hessian_returns_identity(fn):
+    """When nothing couples, ``_trace_hessian_sparsity`` falls back to the identity."""
+    n = 4
+    pat = pattern_from_energy(fn, n)
+    assert nz_set(pat) == nz_set(sps.eye(n))
+
+
+# ---------------------------------------------------------------------------
+# B. nonlinear classification (_NONLINEAR_*, integer_pow, linearity exception)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "exponent,records",
+    [(-1, True), (0, False), (1, False), (2, True), (3, True)],
+)
+def test_integer_pow_exponent_classification(exponent, records):
+    """``integer_pow`` only records couplings for exponents >= 2 or <= -1."""
+    # the +2.0 offset keeps the base away from 0 so the reciprocal (y=-1) is well defined
+    fn = lambda u: jnp.sum((u + 2.0) ** exponent)
+    pat = pattern_from_energy(fn, 4)
+    if records:
+        # y in {-1, 2, 3}: genuine diagonal curvature is recorded
+        assert nz_set(pat) == {(i, i) for i in range(4)}
+        assert dense_hessian_pattern(fn, 4) <= nz_set(pat)
+    else:
+        # y in {0, 1}: linear/constant → identity fallback only
+        assert nz_set(pat) == nz_set(sps.eye(4))
+
+
+@pytest.mark.parametrize(
+    "fn",
+    [
+        lambda u: jnp.sum(3.0 * u),  # mul by constant
+        lambda u: jnp.sum(u * 2.0),  # mul by constant (other operand)
+        lambda u: jnp.sum(u / 4.0),  # div by constant
+    ],
+    ids=["const_mul_lhs", "const_mul_rhs", "const_div"],
+)
+def test_linear_scaling_not_recorded(fn):
+    """``mul``/``div`` by a constant is linear and must record no couplings."""
+    pat = pattern_from_energy(fn, 5)
+    assert nz_set(pat) == nz_set(sps.eye(5))
+
+
+_DOT_C5 = jnp.arange(1.0, 6.0)  # constant vector
+_DOT_M5 = jnp.arange(1.0, 26.0).reshape(5, 5)  # constant matrix
+
+
+@pytest.mark.parametrize(
+    "fn",
+    [
+        lambda u: jnp.dot(_DOT_C5, u),  # dot(const, var)
+        lambda u: jnp.dot(u, _DOT_C5),  # dot(var, const)
+        lambda u: jnp.sum(_DOT_M5 @ u),  # constant matrix-vector contraction
+    ],
+    ids=["dot_const_lhs", "dot_const_rhs", "const_matvec"],
+)
+def test_dot_general_constant_operand_not_recorded(fn):
+    """A ``dot_general`` contraction with a constant operand is linear and has zero
+    Hessian, so it must record no couplings — for *both* ``dot(const, u)`` and
+    ``dot(u, const)``. Regression for the dense-pattern bug where the handler
+    recorded each operand's self-coupling unconditionally; ``dot(f_ext, u.ravel())``
+    then collapsed all DOFs into one clique and produced a fully dense pattern.
+    """
+    pat = pattern_from_energy(fn, 5)
+    assert nz_set(pat) == nz_set(sps.eye(5))
+
+
+def test_dot_general_bilinear_still_couples():
+    """The constant-operand fix must not introduce false negatives: a genuine
+    quadratic form ``uᵀ M u`` (a contraction where *both* operands depend on the
+    input) must still record the full coupling."""
+    n = 5
+    fn = lambda u: u @ _DOT_M5 @ u
+    pat = pattern_from_energy(fn, n)
+    assert dense_hessian_pattern(fn, n) <= nz_set(pat)
+
+
+def _cross_segment_pairs(pairs: set, block: int) -> set:
+    """The subset of ``(row, col)`` pairs that couple DOFs of *different* segments,
+    where segment = ``dof // block``."""
+    return {(r, c) for (r, c) in pairs if r // block != c // block}
+
+
+@pytest.mark.parametrize("d", [2, 3], ids=["2d-normal", "3d-normal"])
+def test_dot_general_batched_matvec_preserves_locality(d):
+    """A batched ``field @ const`` contraction must keep per-segment (batch-row) support
+    instead of collapsing to the whole-array union.
+
+    This is the minimal reproduction of the Nitsche-interface blow-up: a per-segment
+    ``stress_avg`` (here a symmetric ``d×d`` tensor, affine in that segment's DOFs only)
+    is contracted with a *constant* normal to form a ``traction``, which then enters a
+    bilinear ``traction·jump`` term. Because every segment reads only its own DOFs, the
+    true Hessian is block-diagonal (one ``d²×d²`` block per segment) with **no**
+    cross-segment coupling. Before the fix the ``dot_general`` fallback broadcast the
+    total union to every output, so ``traction`` appeared to depend on all DOFs and the
+    pattern saturated to fully dense — an over-approximation that grows ~linearly with the
+    number of segments. Parametrised over a 2D and a 3D normal to mirror the 2D/3D
+    fracture examples.
+    """
+    N = 6  # interface segments
+    b = d * d  # DOFs per segment (a full d×d "stress" tensor)
+    n = N * b
+    normal = jnp.arange(1.0, d + 1)
+
+    def energy(u):
+        S = u.reshape(N, d, d)
+        S = 0.5 * (S + jnp.swapaxes(S, 1, 2))  # symmetric, still segment-local & affine
+        traction = S @ normal  # (N, d) batched matvec with a constant  <-- under test
+        jump = S[:, 0, :]  # (N, d) per-segment jump, segment-local
+        return jnp.sum(traction * jump)  # bilinear traction·jump summed over segments
+
+    pat = pattern_from_energy(energy, n)
+    traced = nz_set(pat)
+
+    # No false negatives: the traced pattern contains the true Hessian.
+    assert dense_hessian_pattern(energy, n) <= traced
+    # The regression guard: the pattern must stay block-diagonal per segment. A single
+    # cross-segment entry means ``traction``'s support globalized (the old behaviour).
+    assert _cross_segment_pairs(traced, b) == set()
+    # Locality => nnz is linear in the segment count, never the dense N²·b².
+    assert pat.nnz <= N * b * b
+
+
+@pytest.mark.parametrize("d", [2, 3], ids=["2d-normal", "3d-normal"])
+def test_dot_general_batched_matvec_locality_under_autovmap(d):
+    """Same per-segment locality when the contraction is written per-element and lifted by
+    ``autovmap`` — the way the Nitsche interface density is actually expressed — with the
+    normal captured as a *global closure constant* rather than an argument.
+
+    ``autovmap`` adds a leading batch axis over the segments, but the constant normal still
+    reaches ``dot_general`` with no batch dimension and an empty dep-set, so it is
+    indistinguishable (at the primitive) from the non-vmapped case above and the support
+    propagation stays block-diagonal. This guards the closure-constant / vmapped framing
+    explicitly, since it is the one used in practice.
+    """
+    N = 6
+    b = d * d
+    n = N * b
+    normal = jnp.arange(1.0, d + 1)  # global closure constant, NOT an autovmap argument
+
+    @autovmap(stress_avg=2)
+    def density(stress_avg):
+        traction = stress_avg @ normal  # constant captured; vmapped over segments
+        jump = stress_avg[0, :]
+        return jnp.dot(traction, jump)
+
+    def energy(u):
+        S = u.reshape(N, d, d)
+        S = 0.5 * (S + jnp.swapaxes(S, 1, 2))  # symmetric, segment-local & affine
+        return jnp.sum(density(S))
+
+    pat = pattern_from_energy(energy, n)
+    traced = nz_set(pat)
+
+    assert dense_hessian_pattern(energy, n) <= traced  # no false negatives
+    assert _cross_segment_pairs(traced, b) == set()  # no support globalization
+    assert pat.nnz <= N * b * b  # linear, never dense
+
+
+@pytest.mark.parametrize("op", ["inv", "solve"], ids=["inv", "solve"])
+def test_dense_linalg_couples_when_consumed_linearly(op):
+    """``jnp.linalg.inv`` / ``solve`` are dense nonlinear maps. Even when the result is
+    consumed by only a *linear* reduction — so no downstream nonlinearity re-couples its
+    support — the handler must record the op's own curvature.
+
+    These lower to ``lu`` / ``custom_linear_solve``. Without a handler they hit the generic
+    fallback, which records *no* second-order couplings, and the true dense block collapses
+    to the diagonal → false negatives. With the ``dense_linalg`` handler the full block is
+    recorded. Regression for that soundness gap.
+    """
+    n = 9
+    if op == "inv":
+        fn = lambda u: jnp.sum(jnp.linalg.inv(u.reshape(3, 3) + 5.0 * jnp.eye(3)))
+    else:
+        b = jnp.arange(1.0, 4.0)
+        fn = lambda u: jnp.sum(jnp.linalg.solve(u.reshape(3, 3) + 5.0 * jnp.eye(3), b))
+    pat = pattern_from_energy(fn, n)
+    assert dense_hessian_pattern(fn, n) <= nz_set(pat)  # no false negatives
+
+
+def test_stack_preserves_per_slice_support():
+    """``stack`` is structural: each stacked slice keeps its own support, so a later
+    nonlinearity couples only *within* a slice, not across all of them. Without a handler
+    the generic fallback unions all inputs into every output element, so the downstream
+    ``**2`` would couple every slice to every other — a spurious dense block. Regression for
+    the ``stack`` handler.
+    """
+    N, block = 4, 2
+    n = block * N
+
+    def energy(u):
+        # slice i is a nonlinear scalar depending only on DOFs {2i, 2i+1}
+        parts = [jnp.sin(u[2 * i]) * u[2 * i + 1] for i in range(N)]
+        return jnp.sum(jnp.stack(parts) ** 2)
+
+    pat = pattern_from_energy(energy, n)
+    traced = nz_set(pat)
+    assert dense_hessian_pattern(energy, n) <= traced  # no false negatives
+    assert _cross_segment_pairs(traced, block) == set()  # no cross-slice globalization
+
+
+def test_split_preserves_per_piece_support():
+    """``split`` is structural: each piece keeps its own support, so a later nonlinearity
+    couples only *within* a piece. The generic fallback unions the whole input into the
+    first output element, so the downstream ``**2`` would couple every DOF to every other —
+    a spuriously dense block. Regression for the ``split`` handler (false *positives*).
+    """
+    N, block = 4, 2
+    n = block * N
+
+    def energy(u):
+        # piece i is nonlinear in — and only in — DOFs {2i, 2i+1}
+        return sum(jnp.sum(jnp.sin(p[0]) * p[1]) for p in jnp.split(u, N))
+
+    pat = pattern_from_energy(energy, n)
+    traced = nz_set(pat)
+    assert dense_hessian_pattern(energy, n) <= traced  # no false negatives
+    assert _cross_segment_pairs(traced, block) == set()  # no cross-piece globalization
+    assert pat.nnz <= N * block * block  # locality => never the dense n²
+
+
+def test_split_records_couplings_of_every_output_piece():
+    """``split`` is a rare *multi-output* primitive, and ``Handlers.fallback`` writes only
+    ``outvars[0]`` — so without a handler every piece but the first gets an *empty* dep-set
+    and its couplings are silently dropped (false *negatives*, the dangerous direction).
+
+    Here the sole nonlinearity lives in the *last* piece and produces a genuine off-diagonal
+    coupling, so a dropped output cannot be masked by the tracer's ``nnz == 0 -> identity``
+    safety net.
+    """
+    n = 6
+
+    def energy(u):
+        _, _, c = jnp.split(u, 3)
+        return jnp.sum(c[0] * c[1])  # couples DOFs 4 and 5, nothing else
+
+    pat = pattern_from_energy(energy, n)
+    traced = nz_set(pat)
+    assert dense_hessian_pattern(energy, n) <= traced  # the (4,5)/(5,4) block survives
+    assert {(4, 5), (5, 4)} <= traced
+    assert _cross_segment_pairs(traced, 2) == set()
+
+
+@pytest.mark.parametrize("axis", [0, 1], ids=["axis0", "axis1"])
+def test_split_along_axis_matches_equivalent_slicing(axis):
+    """Splitting along a *trailing* axis makes the dep rows a piece inherits strided rather
+    than contiguous, so the handler must slice the row-index map along ``axis`` instead of
+    assuming a flat offset.
+
+    Pinned against the same energy written with plain ``[]`` slicing — which goes through
+    the long-trusted ``slice`` handler — so a misrouted row shows up as a pattern mismatch.
+    Equivalence (not just superset) is the real contract: ``split`` is structural, so it must
+    be *invisible* to the pattern. Asserting only ``true <= traced`` would be satisfied by
+    the dense generic fallback and would not test the routing at all.
+    """
+    n = 8
+
+    def with_split(u):
+        a, b = jnp.split(u.reshape(4, 2), 2, axis=axis)
+        return jnp.sum(a * b) + jnp.sum(jnp.sin(a))
+
+    def with_slicing(u):
+        m = u.reshape(4, 2)
+        a, b = (m[:2], m[2:]) if axis == 0 else (m[:, :1], m[:, 1:])
+        return jnp.sum(a * b) + jnp.sum(jnp.sin(a))
+
+    pat = pattern_from_energy(with_split, n)
+    traced = nz_set(pat)
+    assert traced == nz_set(pattern_from_energy(with_slicing, n))  # rows routed identically
+    assert dense_hessian_pattern(with_split, n) <= traced  # no false negatives
+    assert traced == nz_set(pat.T)  # structural symmetry
+    assert pat.nnz < n * n  # locality: never the dense fallback block
+
+
+def test_split_uses_handler_not_generic_fallback():
+    """``split`` must be *handled*, not silently over-approximated: the generic fallback
+    warns, so an energy containing a ``split`` on an active path must emit no warning.
+    Guards against the handler being dropped or the primitive being renamed upstream.
+    """
+
+    def energy(u):
+        return sum(jnp.sum(p**2) for p in jnp.split(u, 2))
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # any fallback UserWarning becomes a failure
+        pat = pattern_from_energy(energy, 4)
+
+    # exact here: split is structural, so **2 couples each DOF only with itself
+    assert nz_set(pat) == {(i, i) for i in range(4)}
+
+
+def test_eigh_is_dense_nonlinear_no_false_negatives():
+    """``jnp.linalg.eigh`` (→ ``eigh``) is a dense nonlinear op: every eigenvalue depends on
+    the whole matrix, so consuming it — even linearly — must record the full block. Covers
+    both a nonlinear (``**2``) and a purely linear (``sum``) consumer."""
+    for consume in (lambda w: jnp.sum(w**2), lambda w: jnp.sum(w)):
+        fn = lambda u: consume(jnp.linalg.eigvalsh(u.reshape(3, 3) + u.reshape(3, 3).T))
+        pat = pattern_from_energy(fn, 9)
+        assert dense_hessian_pattern(fn, 9) <= nz_set(pat)  # no false negatives
+
+
+def test_rev_preserves_support():
+    """``rev`` (``jnp.flip``) is a structural permutation: it reorders dependencies without
+    unioning or coupling them. ``sum(flip(u) * u)`` couples DOF i with n-1-i and nothing
+    else — a pure anti-diagonal, which the generic-fallback union would have smeared dense."""
+    n = 6
+    fn = lambda u: jnp.sum(jnp.flip(u) * u)
+    pat = pattern_from_energy(fn, n)
+    traced = nz_set(pat)
+    assert dense_hessian_pattern(fn, n) <= traced  # no false negatives
+    # locality: every coupling is self or mirror only — never the dense block the
+    # generic-fallback union of flip(u) would have produced.
+    assert all(c in (r, n - 1 - r) for (r, c) in traced)
+
+
+def test_generic_fallback_warns_on_unhandled_primitive():
+    """A primitive the tracer has no handler for — here ``sort`` — carrying a solution
+    dependence must not degrade the pattern silently: the generic fallback over-approximates
+    support and records no couplings, so it emits a ``UserWarning`` naming the primitive.
+    This is the signal that would catch the next unhandled-primitive gap.
+    """
+
+    def energy(u):
+        return jnp.sum(jnp.sort(u) ** 2)  # 'sort' has no handler; **2 makes it active
+
+    with pytest.warns(UserWarning, match=r"no handler for primitive 'sort'"):
+        pattern_from_energy(energy, 6)
+
+
+def test_no_fallback_warning_for_handled_primitives():
+    """A fully-handled energy (inv + stack + element-wise nonlinears) must emit no
+    fallback warning — the handlers keep the generic fallback silent, so its warning stays
+    clean signal rather than noise."""
+
+    def energy(u):
+        A = u.reshape(3, 3) + 5.0 * jnp.eye(3)
+        return jnp.sum(jnp.linalg.inv(A)) + jnp.sum(
+            jnp.stack([jnp.sin(u[0]) * u[1]]) ** 2
+        )
+
+    with warnings.catch_warnings(record=True) as rec:
+        warnings.simplefilter("always")
+        pattern_from_energy(energy, 9)
+    assert not [w for w in rec if "no handler for primitive" in str(w.message)]
+
+
+def test_unary_nonlinear_is_separable_diagonal():
+    """An element-wise unary nonlinearity yields a purely diagonal Hessian pattern."""
+    pat = pattern_from_energy(lambda u: jnp.sum(jnp.sin(u)), 5)
+    assert nz_set(pat) == {(i, i) for i in range(5)}
+
+
+def test_binary_product_couples_operands():
+    """``u[:-1] * u[1:]`` couples adjacent DOFs (a superset of the off-diagonal pattern)."""
+    n = 5
+    pat = pattern_from_energy(lambda u: jnp.sum(u[:-1] * u[1:]), n)
+    # every true adjacency must be captured
+    expected_adjacent = {(i, i + 1) for i in range(n - 1)} | {
+        (i + 1, i) for i in range(n - 1)
+    }
+    assert expected_adjacent <= nz_set(pat)
+
+
+# ---------------------------------------------------------------------------
+# D. higher-order handlers: equivalences and known soundness boundaries
+# ---------------------------------------------------------------------------
+
+
+def test_nested_jit_matches_unjitted():
+    """``@jax.jit`` (and nesting) must not change the traced pattern."""
+    e = lambda u: jnp.sum(u[:-1] * u[1:]) + jnp.sum(jnp.sin(u))
+    base = nz_set(pattern_from_energy(e, 6))
+    assert nz_set(pattern_from_energy(jax.jit(e), 6)) == base
+    assert nz_set(pattern_from_energy(jax.jit(jax.jit(e)), 6)) == base
+
+
+def test_cond_internal_nonlinearity_captured():
+    """The ``cond`` handler traverses branch jaxprs, so a nonlinearity created *inside* a
+    branch and consumed linearly is captured (union of both branches)."""
+    n = 6
+    fn = lambda u: jax.lax.cond(
+        u[0] > 0,
+        lambda v: jnp.sum(v[:-1] * v[1:]),  # tridiagonal coupling
+        lambda v: jnp.sum(v**2),  # diagonal
+        u,
+    )
+    pat = pattern_from_energy(fn, n)
+    assert dense_hessian_pattern(fn, n) <= nz_set(pat)
+    # union of a tridiagonal and a diagonal branch is exactly the tridiagonal pattern
+    assert nz_set(pat) == dense_hessian_pattern(fn, n)
+
+
+def test_cond_nonlinearity_after_branch_is_sound():
+    """A nonlinearity applied *after* the cond (affine branches) is also captured."""
+    n = 6
+    fn = lambda u: jnp.sum(
+        jax.lax.cond(u[0] > 0, lambda v: v * 2.0, lambda v: v[::-1] * 3.0, u) ** 2
+    )
+    assert dense_hessian_pattern(fn, n) <= nz_set(pattern_from_energy(fn, n))
+
+
+def test_switch_multibranch_captured():
+    """``switch`` lowers to a multi-branch ``cond``; every branch is traced and unioned."""
+    n = 6
+    fn = lambda u: jax.lax.switch(
+        jnp.int32(jnp.clip(u[0], 0, 2)),
+        [
+            lambda v: jnp.sum(v**2),
+            lambda v: jnp.sum(v[:-1] * v[1:]),
+            lambda v: jnp.sum(jnp.sin(v)),
+        ],
+        u,
+    )
+    assert dense_hessian_pattern(fn, n) <= nz_set(pattern_from_energy(fn, n))
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="scan_map seeds the carry with empty deps: a data-dependent carry coupling "
+    "across iterations is not tracked (false negatives). Map-style scans are sound.",
+)
+def test_scan_carry_coupling_is_unsound():
+    """Documents a soundness boundary: cross-iteration coupling via a scan carry."""
+    n = 6
+    fn = lambda u: jnp.sum(jax.lax.scan(lambda c, x: (x, c * x), 1.0, u)[1])
+    assert dense_hessian_pattern(fn, n) <= nz_set(pattern_from_energy(fn, n))
+
+
+# ---------------------------------------------------------------------------
+# E. virtual-work trial/test split machinery
+# ---------------------------------------------------------------------------
+
+
+def test_virtual_work_bad_argument_name_raises():
+    """An unknown ``trial_arg`` / ``test_arg`` name is rejected up front."""
+    g = lambda w, u: jnp.sum(w * u)
+    with pytest.raises(ValueError, match="Trial argument 'x' not found"):
+        pattern_from_virtual_work(g, 3, trial_arg="x", test_arg="w")
+    with pytest.raises(ValueError, match="Test argument 'y' not found"):
+        pattern_from_virtual_work(g, 3, trial_arg="u", test_arg="y")
+
+
+def test_virtual_work_excludes_trial_only_term():
+    """A trial-only nonlinear term must not leak into the cross-block tangent K."""
+    n = 4
+    # cross term w*u (→ diagonal K) plus a trial-only nonlinearity u**2 that must be masked
+    g = lambda w, u: jnp.sum(w * u) + jnp.sum(u**2)
+    K = pattern_from_virtual_work(g, n, trial_arg="u", test_arg="w")
+    assert nz_set(K) == {(i, i) for i in range(n)}
+
+
+def test_virtual_work_static_arg_forwarded():
+    """Extra ``*static_args`` are forwarded positionally to the virtual-work function."""
+    n = 4
+    g = lambda w, u, kappa: jnp.sum(kappa * w[:-1] * u[1:])
+    K = pattern_from_virtual_work(g, n, "u", "w", 2.0)
+    assert dense_vw_pattern(lambda w, u: g(w, u, 2.0), n) <= nz_set(K)
+    assert K.nnz > 0  # the static coefficient does not zero-out the coupling
+
+
+def test_virtual_work_default_arg_used():
+    """A parameter with a default is filled from the signature when not supplied."""
+    n = 4
+    g = lambda w, u, kappa=3.0: jnp.sum(kappa * w[:-1] * u[1:])
+    K = pattern_from_virtual_work(g, n, "u", "w")
+    assert dense_vw_pattern(lambda w, u: g(w, u), n) <= nz_set(K)
+
+
+def test_virtual_work_missing_static_arg_raises():
+    """A non-defaulted extra parameter with no supplied static arg is an error."""
+    n = 3
+    g = lambda w, u, kappa: jnp.sum(kappa * w * u)
+    with pytest.raises(ValueError, match="Missing static argument"):
+        pattern_from_virtual_work(g, n, "u", "w")
+
+
+def test_virtual_work_unsymmetric_pattern_captured():
+    """A one-way cross coupling yields a genuinely unsymmetric K, captured with no
+    false negatives (the path that distinguishes the VW tracer from the energy tracer)."""
+    n = 4
+    # w_i couples to u_{i+1} but not the reverse → strictly upper off-diagonal block
+    g = lambda w, u: jnp.sum(w[:-1] * u[1:])
+    K = pattern_from_virtual_work(g, n, trial_arg="u", test_arg="w")
+    ref = dense_vw_pattern(g, n)
+    assert ref <= nz_set(K)
+    assert nz_set(K) != {(c, r) for (r, c) in nz_set(K)}  # not symmetric
+
+
+# ---------------------------------------------------------------------------
+# F. small unit tests of the data structures and helpers
+# ---------------------------------------------------------------------------
+
+
+def test_unwrap_jit_unwraps_jit_but_preserves_other_transforms():
+    """``_unwrap_jit`` strips ``jax.jit`` wrappers but leaves ``grad``/``vmap`` intact."""
+    e = lambda u: jnp.sum(u**2)
+    assert _unwrap_jit(jax.jit(e)) is e
+    assert _unwrap_jit(jax.jit(jax.jit(e))) is e
+    assert _unwrap_jit(e) is e
+
+    g = jax.grad(e)
+    assert _unwrap_jit(g) is g  # grad must NOT be unwrapped to its primal
+
+
+def test_sparse_dep_set_singletons_and_empty():
+    s = SparseDepSet.singletons(3)
+    assert s.shape == (3,)
+    assert s.dep.shape == (3, 3)
+    assert s.dep.nnz == 3
+    np.testing.assert_array_equal(s.dep.toarray(), np.eye(3, dtype=bool))
+
+    e = SparseDepSet.empty((2, 2), 3)
+    assert e.shape == (2, 2)
+    assert e.dep.shape == (4, 3)
+    assert e.dep.nnz == 0
+
+
+def test_sparse_dep_set_total_union_and_reshape():
+    s = SparseDepSet.singletons(4)
+    union = s.total_union()
+    assert union.shape == ()
+    assert union.dep.nnz == 4  # all four DOFs active after OR-reduction
+
+    reshaped = SparseDepSet.singletons(6).reshape(2, 3)
+    assert reshaped.shape == (2, 3)
+    assert reshaped.dep.shape == (6, 6)  # underlying dep is unchanged by reshape
+
+
+def test_sparse_dep_set_broadcast_to_replicates_rows():
+    one_row = SparseDepSet(sps.csr_matrix(np.array([[1, 0, 1]], dtype=bool)), (1,))
+    out = one_row.broadcast_to((4,))
+    assert out.shape == (4,)
+    assert out.dep.shape == (4, 3)
+    np.testing.assert_array_equal(
+        out.dep.toarray(), np.tile(np.array([[1, 0, 1]], dtype=bool), (4, 1))
+    )
+
+
+def test_coupling_accumulator_fingerprint_dedup():
+    """Recording an identical dependency structure twice must not duplicate coordinates."""
+    acc = CouplingAccumulator(3)
+    dep = sps.csr_matrix(np.array([[1, 0, 0], [0, 1, 0]], dtype=bool))
+    acc.record_dep(dep)
+    acc.record_dep(dep)  # same fingerprint → skipped
+    pat = acc.finalize()
+    assert pat.dtype == np.int8
+    assert nz_set(pat) == {(0, 0), (1, 1)}
+    assert set(pat.data.tolist()) == {1}  # binarized
+
+
+def test_coupling_accumulator_trial_test_split_mask():
+    """With a split, only cross pairs (one DOF on each side) are retained."""
+    acc = CouplingAccumulator(4)
+    full_row = sps.csr_matrix(np.ones((1, 4), dtype=bool))
+    acc.record_dep(full_row, trial_test_split=2)
+    pat = acc.finalize()
+    expected = {(r, c) for r in range(4) for c in range(4) if (r < 2) != (c < 2)}
+    assert nz_set(pat) == expected
+
+
+def test_coupling_accumulator_empty_finalize():
+    acc = CouplingAccumulator(3)
+    pat = acc.finalize()
+    assert pat.shape == (3, 3)
+    assert pat.nnz == 0
+    assert pat.dtype == np.int8
+
+
+# ---------------------------------------------------------------------------
+# G. opaque-leaf handlers: custom_vjp/jvp, host callbacks, debug, ffi_call
+# ---------------------------------------------------------------------------
+#
+# These leaves are opaque to the tracer (no traceable jaxpr / no host-side rule).
+# The contract: couple all *active inputs of the call* conservatively -- which, when each
+# call sees only one element's local DOFs, is exactly the per-element pattern. The shared
+# adjacent-difference energy below makes every call's input {i, i+1}, so the conservative
+# coupling is the (tight) tridiagonal pattern.
+
+
+def _adjacent_energy(leaf, M):
+    """``sum_i leaf(U[i] - U[i+1])`` -- each opaque call's input is the local pair {i,i+1}."""
+
+    def energy(U):
+        e = 0.0
+        for i in range(M - 1):
+            e = e + leaf(U[i] - U[i + 1])
+        return jnp.sum(e)
+
+    return energy
+
+
+def _tridiagonal(M) -> set[tuple[int, int]]:
+    s = {(i, i) for i in range(M)}
+    s |= {(i, i + 1) for i in range(M - 1)}
+    s |= {(i + 1, i) for i in range(M - 1)}
+    return s
+
+
+def test_custom_jvp_leaf_conservative_and_tight():
+    """A ``custom_jvp`` leaf is treated as an opaque nonlinear box: it couples its input
+    DOFs, giving the tridiagonal pattern with no false negatives vs the true Hessian."""
+    M = 6
+
+    @jax.custom_jvp
+    def leaf(x):
+        return 0.5 * x**2
+
+    @leaf.defjvp
+    def leaf_jvp(primals, tangents):
+        (x,), (dx,) = primals, tangents
+        return leaf(x), x * dx
+
+    fn = _adjacent_energy(leaf, M)
+    pat = pattern_from_energy(fn, M)
+    assert nz_set(pat) == _tridiagonal(M)
+    assert dense_hessian_pattern(fn, M) <= nz_set(pat)  # no false negatives
+
+
+def test_custom_vjp_leaf_hides_iteration_but_couples_inputs():
+    """A ``custom_vjp`` leaf hiding an iterative solve is opaque to the tracer; it still
+    records the conservative coupling of its inputs (tridiagonal)."""
+    M = 6
+
+    @jax.custom_vjp
+    def leaf(x):
+        y = x
+        for _ in range(5):  # hidden Newton iteration, invisible to the tracer
+            y = y - (y**3 + y - x) / (3 * y**2 + 1.0)
+        return 0.5 * y**2
+
+    def leaf_fwd(x):
+        y = x
+        for _ in range(5):
+            y = y - (y**3 + y - x) / (3 * y**2 + 1.0)
+        return 0.5 * y**2, y
+
+    def leaf_bwd(res, g):
+        y = res
+        return (g * y / (3 * y**2 + 1.0),)
+
+    leaf.defvjp(leaf_fwd, leaf_bwd)
+
+    fn = _adjacent_energy(leaf, M)
+    # The tracer must not descend into the loop: a custom_vjp_call jaxpr is present.
+    prims = {e.primitive.name for e in jax.make_jaxpr(fn)(np.zeros(M)).jaxpr.eqns}
+    assert "custom_vjp_call" in prims
+    assert nz_set(pattern_from_energy(fn, M)) == _tridiagonal(M)
+
+
+@pytest.mark.parametrize("ordered_kind", ["pure", "io"])
+def test_host_callback_leaf_records_couplings(ordered_kind):
+    """``pure_callback`` / ``io_callback`` get the dedicated opaque handler, so couplings
+    are RECORDED (the plain fallback would silently drop them, leaving only the diagonal)."""
+    from jax.experimental import io_callback
+
+    M = 6
+
+    def leaf(x):
+        sds = jax.ShapeDtypeStruct(x.shape, x.dtype)
+        if ordered_kind == "pure":
+            return jax.pure_callback(lambda v: 0.5 * v**2, sds, x)
+        return io_callback(lambda v: 0.5 * v**2, sds, x, ordered=True)
+
+    pat = pattern_from_energy(_adjacent_energy(leaf, M), M)
+    assert nz_set(pat) == _tridiagonal(M)
+    assert pat.nnz > M  # off-diagonals present -> couplings were NOT silently dropped
+
+
+def test_debug_print_is_noop():
+    """``jax.debug.print`` is an effect-only (no-output) primitive: it must neither change
+    the pattern nor break tracing."""
+    M = 6
+    base = lambda U: jnp.sum(U[:-1] * U[1:])
+
+    def with_print(U):
+        jax.debug.print("tracing U with shape {}", U.shape)
+        return jnp.sum(U[:-1] * U[1:])
+
+    assert nz_set(pattern_from_energy(with_print, M)) == nz_set(
+        pattern_from_energy(base, M)
+    )
+
+
+def test_ffi_call_default_dense_registered_block_diagonal():
+    """A vmapped ``ffi_call`` is a single batched opaque call -> global dense by default;
+    after ``register_elementwise_ffi`` it is treated as elementwise along the vmap axis
+    -> the sparse (tridiagonal) per-element pattern. (The FFI is never executed during
+    tracing, so no compiled target is needed.)"""
+    import jax.ffi as jffi
+
+    from tatva.sparse import register_elementwise_ffi
+    from tatva.sparse.tracer import _ELEMENTWISE_FFI_TARGETS
+
+    M = 6
+    target = "tatva_unittest_rve"
+
+    def leaf(s):  # per quad point: (n_dim,) -> (n_dim,)
+        return jffi.ffi_call(
+            target, jax.ShapeDtypeStruct(s.shape, s.dtype), vmap_method="broadcast_all"
+        )(s)
+
+    def energy(U):
+        strain = (U[:-1] - U[1:]).reshape(-1, 1)  # (M-1, n_dim=1)
+        return jnp.sum(jax.vmap(leaf)(strain) * strain)
+
+    try:
+        assert target not in _ELEMENTWISE_FFI_TARGETS
+        pat_dense = pattern_from_energy(energy, M)
+        assert pat_dense.nnz == M * M  # conservative global dense
+
+        register_elementwise_ffi(target)
+        pat_sparse = pattern_from_energy(energy, M)
+        assert nz_set(pat_sparse) == _tridiagonal(M)
+    finally:
+        _ELEMENTWISE_FFI_TARGETS.discard(target)

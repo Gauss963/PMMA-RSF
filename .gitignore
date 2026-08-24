@@ -1,0 +1,44 @@
+paraview*
+*.*~
+*.ipynb_checkpoints*
+*.msh
+*.xml
+*.xdmf
+*.h5
+output*
+arguments-*
+*__pycache*
+*.cpython-37.pyc*
+*notebooks/plot*
+*.pdf
+*.err
+*.out
+*_venv*
+*venv*
+*jax-cache*
+*egg-info*
+*build*
+uv.lock
+.pytest_cache/
+.ruff_cache/
+
+tatva-coloring/target
+*.so
+Cargo.lock
+
+# Local macOS metadata
+.DS_Store
+
+# Local reference material is not part of PMMA-RSF.
+NTU-Dynamic-Strain/
+
+# Local simulation outputs
+data/
+Plot/
+runs/
+stats/
+*.mp4
+*.png
+
+# Preserve old local dumps while keeping them outside the new repository.
+Velocity-weakening/

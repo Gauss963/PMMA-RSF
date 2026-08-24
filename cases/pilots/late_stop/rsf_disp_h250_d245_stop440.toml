@@ -1,0 +1,82 @@
+[case]
+name = "pmma-rsf-0116-q4-displacement-pilot-h250-d245-stop440"
+run_root = "runs"
+
+[geometry.moving]
+origin = [0.0, 0.0]
+dimensions = [200.0, 500.0]
+
+[geometry.stationary]
+origin = [200.0, 0.0]
+dimensions = [145.0, 550.0]
+
+[material]
+density = 1.148e-9
+young_modulus = 7662.0
+poisson_ratio = 0.2
+
+[loading]
+normal_stress_reference = 16.0
+normal_displacement = 0.691620986687549
+normal_phase_time = 0.003
+normal_ramp_time = 0.0005
+normal_relaxation_time = 0.0002
+shear_displacement_initial = 0.0
+shear_displacement_final = 2.45
+quasistatic_shear_fraction = 0.0
+quasistatic_shear_start_time = 0.0
+quasistatic_shear_ramp_time = 0.0
+shear_phase_time = 0.029
+shear_ramp_time = 0.010
+shear_ramp_shape = "half-cosine"
+stop_on_rupture = true
+stop_slip = 0.00629795
+stop_velocity = 10.0
+stop_min_y = 440.0
+stop_max_y = 440.0
+lock_shear_edge_during_normal = true
+relax_tangential_contact_during_normal = true
+
+[numerics]
+mesh_size = 2.50
+cfl = 0.35
+contact_safety_factor = 0.50
+dtype = "float32"
+operator_batch_size = 65536
+
+[output]
+bulk_normal_frames = 2
+bulk_shear_frames = 300
+interface_normal_frames = 20
+interface_shear_frames = 6000
+compression = "lzf"
+estimated_compression_ratio = 1.0
+include_initial_frame = false
+maximum_dump_tb = 0.02
+checkpoint_interval_minutes = 10.0
+
+[rsf]
+initial_friction = 0.8
+reference_velocity = 1.0e-4
+reference_state = 3.3e-4
+initial_steady_velocity = 1.0e-4
+dynamic_calibration_velocity = 2000.0
+target_middle_dynamic_friction = 0.45
+loading_length = 30.0
+leading_length = 30.0
+transition_length = 10.0
+
+[rsf.loading]
+a = 0.004
+b = 0.035
+dc = 0.00629795
+
+[rsf.middle]
+a = 0.005
+b = 0.025819400653936703
+dc = 0.00629795
+
+[rsf.leading]
+a = 0.008
+b = 0.005
+dc = 0.00629795

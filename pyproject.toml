@@ -1,0 +1,53 @@
+[project]
+name = "pmma-rsf"
+version = "0.1.0"
+description = "Tatva-based PMMA dynamic rupture simulations with rate-and-state friction"
+authors = [
+    { name = "Mohit Pundir", email = "mpundir@ethz.ch" },
+    { name = "Flavio Lorez", email = "florez@ethz.ch" },
+]
+maintainers = [
+    { name = "Gauss963", email = "B09501028@ntu.edu.tw" },
+]
+license = "LGPL-3.0"
+license-files = [
+    "COPYING",
+    "COPYING.LESSER",
+]
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "jax>=0.4.1",
+    "h5py>=3.10",
+    "numpy",
+    "jax-autovmap>=0.3.0",
+    "tatva-coloring>=0.0.2"
+]
+
+[project.optional-dependencies]
+analysis = [
+    "matplotlib",
+    "scipy",
+]
+dev = [
+    "pytest>=8.4.2",
+]
+mpi = [
+    "mpi4py",
+    "mpi4jax>=0.9.0",
+]
+
+[build-system]
+requires = [ "hatchling", ]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tatva"]
+
+[project.urls]
+repository = "https://github.com/Gauss963/PMMA-RSF"
+upstream = "https://github.com/smec-ethz/tatva"
