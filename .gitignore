@@ -29,9 +29,6 @@ Cargo.lock
 # Local macOS metadata
 .DS_Store
 
-# Local reference material is not part of PMMA-RSF.
-NTU-Dynamic-Strain/
-
 # Local simulation outputs
 data/
 Plot/
@@ -39,6 +36,3 @@ runs/
 stats/
 *.mp4
 *.png
-
-# Preserve old local dumps while keeping them outside the new repository.
-Velocity-weakening/

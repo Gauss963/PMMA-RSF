@@ -12,6 +12,7 @@ PMMA model.
 
 ```text
 cases/                 TOML simulation inputs and coarse pilot scans
+CohesiveZoneModel/     Cohesive-zone anchor and LSW-to-RSF calibration
 scripts/run_case.py    Simulation entry point
 scripts/               Analysis and animation programs
 slurm/                 NANO4 GPU and F1 CPU job scripts
@@ -42,17 +43,17 @@ Validate mesh size, time step, frame counts, and dump budget without creating a
 run:
 
 ```bash
-python scripts/run_case.py cases/rsf_0116_q4_explicit_10h.toml --preflight
+python scripts/run_case.py cases/rsf_0117_q4_explicit_10h.toml --preflight
 ```
 
 Launch locally:
 
 ```bash
-python scripts/run_case.py cases/rsf_0116_q4_explicit_10h.toml
+python scripts/run_case.py cases/rsf_0117_q4_explicit_10h.toml
 ```
 
-Every new invocation atomically allocates the next directory, beginning at
-`runs/TS0017_<case-name>/`. A run contains the resolved input, HDF5 dump,
+Every new invocation atomically allocates the next label-free directory,
+beginning at `runs/TS0117/`. A run contains the resolved input, HDF5 dump,
 checkpoint, logs, statistics, and status. Resuming uses the same directory and
 does not consume another sequence number.
 
@@ -72,7 +73,7 @@ analysis suite later on a CPU node:
 
 ```bash
 python scripts/postprocess_velocity_weakening_run.py \
-  --input runs/TS0017_example/data/simulation.h5
+  --input runs/TS0117/data/simulation.h5
 ```
 
 The F1 Slurm scripts can render frames with many workers while retaining bounded

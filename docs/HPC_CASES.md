@@ -4,9 +4,9 @@ Each PMMA simulation starts from one TOML input and writes a numbered,
 self-contained directory below `runs`.
 
 ```text
-runs/TS0017_case-name/                # first run in the new sequence
+runs/TS0117/                          # first run in the new sequence
   ...
-runs/TS0018_case-name/                # local and Slurm use one sequence
+runs/TS0118/                          # local and Slurm use one sequence
   input/case.toml
   input/resolved_case.json
   input/command.txt
@@ -23,14 +23,14 @@ Preflight a case without constructing a mesh or creating a run directory:
 
 ```bash
 python scripts/run_case.py \
-  cases/rsf_0116_hpc.toml --preflight
+  cases/rsf_0117_q4_explicit_10h.toml --preflight
 ```
 
 Run it locally:
 
 ```bash
 python scripts/run_case.py \
-  cases/rsf_0116_hpc.toml
+  cases/rsf_0117_q4_explicit_10h.toml
 ```
 
 Submit the default 0.50 mm Q4 explicit production case on one H200:
@@ -48,7 +48,7 @@ integrator state and the exact HDF5 frame indices. Resume a cleanly
 checkpointed run with:
 
 ```bash
-sbatch --export=ALL,CASE_FILE=/work/gauss112/tatva/cases/rsf_0116_hpc.toml,RESUME_DIR=/work/gauss112/tatva/runs/TS0017_case-name \
+sbatch --export=ALL,CASE_FILE=/work/gauss112/tatva/cases/rsf_0117_q4_explicit_10h.toml,RESUME_DIR=/work/gauss112/tatva/runs/TS0117 \
   slurm/PMMA-RSF-GPU.slurm
 ```
 
@@ -92,6 +92,8 @@ front leaves the nucleation end.
 
 The current Q4 production case uses a 0.50 mm mesh, 1,443,584 displacement
 DOFs, an exact 15 ns step, 36,000 bulk shear frames, and 300,000 high-rate
-interface frames. Its conservative uncompressed estimate is 1.253 TB; the
+interface frames. Its RSF parameters are derived from the 5 mm cohesive-zone
+anchor in `CohesiveZoneModel/Lc_estimate.py`, including a shared
+`D_c=0.000376505 mm`. Its conservative uncompressed estimate is 1.253 TB; the
 calibrated LZF estimate is 1.196 TB and must remain below the configured
 1.20 TB dump limit.

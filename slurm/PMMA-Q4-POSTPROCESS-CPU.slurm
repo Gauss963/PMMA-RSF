@@ -16,7 +16,7 @@
 set -uo pipefail
 
 ROOT=/work1/gauss112/tatva
-RUN_DIR=${RUN_DIR:?Submit with --export=ALL,RUN_DIR=/path/to/TS####_case}
+RUN_DIR=${RUN_DIR:?Submit with --export=ALL,RUN_DIR=/path/to/TS####}
 WORKERS=${WORKERS:-56}
 PYTHON=/home/gauss112/.conda/envs/tatva/bin/python
 FFMPEG_DIR=/home/gauss112/.conda/envs/FFmpeg/bin

@@ -23,6 +23,7 @@ from tatva.pmma.runner import (
     make_run_config,
     run_case,
 )
+from CohesiveZoneModel.Lc_estimate import RSF_D_c, RSF_ZONES, mm
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,24 +36,40 @@ CORRECTED_HYBRID_CASE = (
 EXPLICIT_Q4_CASE = (
     ROOT / "cases/rsf_0116_q4_explicit_10h.toml"
 )
+COHESIVE_CALIBRATED_CASE = (
+    ROOT / "cases/rsf_0117_q4_explicit_10h.toml"
+)
 
 
-def test_run_directory_sequence_starts_at_ts0017_and_increments(tmp_path):
+def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
     (tmp_path / "0116_legacy-run").mkdir()
+    (tmp_path / "TS0017_historical-run").mkdir()
 
-    first = allocate_run_directory(tmp_path, "PMMA RSF pilot")
-    second = allocate_run_directory(tmp_path, "PMMA RSF pilot")
+    first = allocate_run_directory(tmp_path)
+    second = allocate_run_directory(tmp_path)
 
-    assert first.name == "TS0017_PMMA-RSF-pilot"
-    assert second.name == "TS0018_PMMA-RSF-pilot"
+    assert first.name == "TS0117"
+    assert second.name == "TS0118"
 
 
 def test_run_directory_sequence_continues_from_highest_ts_id(tmp_path):
-    (tmp_path / "TS0021_previous").mkdir()
+    (tmp_path / "TS0121_previous").mkdir()
 
-    allocated = allocate_run_directory(tmp_path, "next")
+    allocated = allocate_run_directory(tmp_path)
 
-    assert allocated.name == "TS0022_next"
+    assert allocated.name == "TS0122"
+
+
+def test_cohesive_calibrated_case_matches_lc_estimate():
+    config = load_case_config(COHESIVE_CALIBRATED_CASE)
+    expected_dc_mm = RSF_D_c / mm
+
+    for name in ("loading", "middle", "leading"):
+        zone = getattr(config.rsf, name)
+        assert zone.direct_effect == pytest.approx(RSF_ZONES[name]["a"])
+        assert zone.state_effect == pytest.approx(RSF_ZONES[name]["b"])
+        assert zone.characteristic_slip == pytest.approx(expected_dc_mm)
+    assert config.loading.stop_slip == pytest.approx(expected_dc_mm)
 
 
 def test_storage_preflight_uses_uncompressed_remaining_size_and_reserve(

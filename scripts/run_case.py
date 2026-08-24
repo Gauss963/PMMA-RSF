@@ -27,7 +27,6 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Use an exact run directory, primarily for Slurm job-local logs.",
     )
-    parser.add_argument("--label", default=None)
     parser.add_argument(
         "--resume",
         action="store_true",
@@ -67,13 +66,12 @@ def main() -> int:
             raise ValueError(
                 "--allocate-run-dir cannot be combined with --run-dir or --resume."
             )
-        print(allocate_run_directory(run_root, args.label or config.name))
+        print(allocate_run_directory(run_root))
         return 0
     run_dir = run_case(
         config,
         source,
         run_root=run_root,
-        label=args.label,
         run_dir=args.run_dir,
         resume=args.resume,
         time_limit_seconds=args.time_limit_seconds,

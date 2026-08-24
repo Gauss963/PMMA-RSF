@@ -156,24 +156,23 @@ def make_run_config(config: PMMACaseConfig) -> RunConfig:
 
 
 RUN_SEQUENCE_PREFIX = "TS"
-FIRST_RUN_NUMBER = 17
+FIRST_RUN_NUMBER = 117
 MINIMUM_FREE_SPACE_RESERVE_BYTES = 50_000_000_000
 
 
-def allocate_run_directory(root: Path, label: str) -> Path:
-    """Atomically allocate the next ``TS####_<label>`` run directory."""
+def allocate_run_directory(root: Path) -> Path:
+    """Atomically allocate the next label-free ``TS####`` run directory."""
     root.mkdir(parents=True, exist_ok=True)
-    safe_label = re.sub(r"[^A-Za-z0-9._-]+", "-", label).strip("._-")
-    if not safe_label:
-        raise ValueError("Run label must contain at least one filename-safe character.")
     existing = []
     for path in root.iterdir():
-        match = re.match(rf"^{RUN_SEQUENCE_PREFIX}(\d+)_", path.name)
+        # Read both the new TS#### names and historical TS####_<label> names.
+        match = re.fullmatch(rf"{RUN_SEQUENCE_PREFIX}(\d+)(?:_.*)?", path.name)
         if path.is_dir() and match:
             existing.append(int(match.group(1)))
     number = max(existing, default=FIRST_RUN_NUMBER - 1) + 1
+    number = max(number, FIRST_RUN_NUMBER)
     while True:
-        candidate = root / f"{RUN_SEQUENCE_PREFIX}{number:04d}_{safe_label}"
+        candidate = root / f"{RUN_SEQUENCE_PREFIX}{number:04d}"
         try:
             candidate.mkdir()
         except FileExistsError:
@@ -261,7 +260,6 @@ def run_case(
     source_path: Path,
     *,
     run_root: Path,
-    label: str | None = None,
     run_dir: Path | None = None,
     resume: bool = False,
     time_limit_seconds: float | None = None,
@@ -283,7 +281,7 @@ def run_case(
     if run_dir is None:
         run_root.mkdir(parents=True, exist_ok=True)
         storage = _validate_run_storage(run_root, estimate)
-        run_dir = allocate_run_directory(run_root, label or config.name)
+        run_dir = allocate_run_directory(run_root)
     else:
         run_dir = run_dir.expanduser().resolve()
         if resume:
