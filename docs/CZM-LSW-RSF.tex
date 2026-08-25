@@ -1,0 +1,181 @@
+% Length scales and friction parameters shared by the cohesive-zone,
+% linear-slip-weakening and rate-and-state descriptions of the PMMA fault.
+% Values are produced by CohesiveZoneModel/Lc_estimate.py.
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=1.3cm]{geometry}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{amsmath}
+\usepackage{siunitx}
+\usepackage[hidelinks]{hyperref}
+
+% Ragged-right paragraph column, so the fixed-width cells below do not stretch.
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcommand{\doi}[1]{\href{https://doi.org/#1}{\scriptsize\texttt{#1}}}
+
+\begin{document}
+
+\section*{From cohesive zone to slip weakening and rate and state}
+
+The cohesive-zone model is the anchor. It fixes the process-zone size $X_c$;
+the fracture energy $\Gamma$, the linear-slip-weakening (LSW) parameters and
+the rate-and-state (RSF) parameters all follow from it at the current friction
+coefficients. $D_c$ is therefore a derived quantity, and carrying an old $D_c$
+across a change of $\mu_k$ silently rescales $\Gamma$.
+
+Two kinds of quantity appear below and must not be confused. A \emph{slip} is a
+relative displacement across the fault, measured along the sliding direction; a
+\emph{fault length} is a distance measured along the fault plane. Both carry
+units of length, but they differ here by roughly four orders of magnitude.
+Conventions differ between sources as well: $L_c$ and $h^{*}$ are half-lengths,
+whereas $X_c$ and $L_b$ are full zone lengths. Comparing a half-length against a
+physical patch width requires the factor of two.
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \caption{Length scales and friction parameters of the PMMA fault, anchored on
+  $X_c = \SI{5}{\milli\meter}$ with $\mu_s = 0.8$, $\mu_k = 0.45$,
+  $\sigma_n = \SI{16}{\mega\pascal}$, $E = \SI{7.662}{\giga\pascal}$ and
+  $\nu = 0.2$. RSF values are quoted for the middle (rupture-carrying) zone,
+  $a = 0.005$, $b = 0.02581940$.}
+  \label{tab:czm-lsw-rsf}
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{@{}l L{2.6cm} l l l r L{2.5cm} L{4.0cm}@{}}
+    \toprule
+    Symbol & Quantity & Model & Type & Conv. & Value & Source & DOI \\
+    \midrule
+    $X_c$
+      & Cohesive zone size
+      & CZM & Length & Full
+      & \SI{5}{\milli\meter}
+      & Palmer \& Rice (1973); Kammer \& McLaskey (2019)
+      & \doi{10.1098/rspa.1973.0040} \newline
+        \doi{10.1016/j.epsl.2019.01.031} \\
+    \addlinespace
+    $\Gamma$
+      & Fracture energy
+      & Shared & Energy & ---
+      & \SI{22.2348}{\joule\per\meter\squared}
+      & $\Gamma = \Delta\tau D_c / 2$
+      & --- \\
+    \addlinespace
+    $D_c$
+      & Characteristic slip
+      & LSW & \textbf{Slip} & ---
+      & \SI{7.94099e-3}{\milli\meter}
+      & Inverted from $X_c$
+      & \doi{10.1098/rspa.1973.0040} \\
+    \addlinespace
+    $L_c$
+      & Critical nucleation length
+      & LSW & Length & \textbf{Half}
+      & \SI{3.60253}{\milli\meter}
+      & Andrews (1976)
+      & \doi{10.1029/JB081i032p05679} \\
+    $2L_c$
+      & Smallest unstable patch
+      & LSW & Length & Full
+      & \SI{7.20506}{\milli\meter}
+      & Andrews (1976)
+      & \doi{10.1029/JB081i032p05679} \\
+    \addlinespace
+    $D_c^{\mathrm{RSF}}$
+      & State evolution distance
+      & RSF & \textbf{Slip} & ---
+      & \SI{3.76505e-4}{\milli\meter}
+      & Ageing law, matched on $\Gamma$
+      & \doi{10.1029/JB084iB05p02161} \\
+    \addlinespace
+    $L_b$
+      & Process zone size
+      & RSF & Length & Full
+      & \SI{3.63702}{\milli\meter}
+      & Rubin \& Ampuero (2005)
+      & \doi{10.1029/2005JB003686} \\
+    \addlinespace
+    $h^{*}_{\mathrm{RR}}$
+      & Nucleation length, linear stability
+      & RSF & Length & \textbf{Half}
+      & \SI{3.54253}{\milli\meter}
+      & Rice \& Ruina (1983)
+      & \doi{10.1115/1.3167042} \\
+    $h^{*}_{\mathrm{RA}}$
+      & Nucleation length, ageing law
+      & RSF & Length & \textbf{Half}
+      & \SI{3.56108}{\milli\meter}
+      & Rubin \& Ampuero (2005)
+      & \doi{10.1029/2005JB003686} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection*{Governing expressions}
+
+With $\Delta\tau = (\mu_s - \mu_k)\sigma_n$ and the plane-strain combination
+$\mu^{*} = \mu/(1-\nu)$, the entries above follow from
+%
+\begin{align}
+  X_c &= \frac{9\pi}{16}\,\frac{\mu^{*}\Gamma}{\Delta\tau^{2}},
+  &
+  \Gamma &= \tfrac{1}{2}\Delta\tau D_c,
+  \\
+  L_c &= \frac{4}{\pi}\,\frac{\mu^{*}\Gamma}{\Delta\tau^{2}},
+  &
+  L_b &= \frac{\mu^{*} D_c^{\mathrm{RSF}}}{b\,\sigma_n},
+  \\
+  h^{*}_{\mathrm{RR}} &=
+    \frac{\pi}{4}\,\frac{\mu^{*} D_c^{\mathrm{RSF}}}{(b-a)\,\sigma_n},
+  &
+  h^{*}_{\mathrm{RA}} &=
+    \frac{2}{\pi}\,\frac{\mu^{*}\, b\, D_c^{\mathrm{RSF}}}{(b-a)^{2}\sigma_n}.
+\end{align}
+%
+$h^{*}_{\mathrm{RR}}$ applies for $a/b$ well below $0.378$ and
+$h^{*}_{\mathrm{RA}}$ as $a/b$ approaches unity; both are undefined where the
+zone is velocity neutral or strengthening. The two nucleation estimates and
+$L_c$ answer different questions --- a linear-stability size for a uniform RSF
+fault against an energy balance for a slip-weakening crack --- so their close
+agreement here should be read as coincidence rather than as mutual
+confirmation.
+
+\subsection*{Rate-and-state coefficients}
+
+The RSF friction coefficient is
+$\mu = f_0 + a\ln(V/V^{*}) + b\ln(V^{*}\theta/D_c^{\mathrm{RSF}})$, so $a$ is
+the instantaneous (direct) response to a change of slip rate and $b$ is the
+evolution effect that follows as the state variable $\theta$ relaxes over a
+slip of order $D_c^{\mathrm{RSF}}$. The steady-state combination $a-b$ sets
+stability.
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \caption{Zone-wise rate-and-state coefficients. The friction drop alone fixes
+  $a-b = (\mu_k-\mu_s)/\ln(V_2/V_1) = -0.0208194$ for the calibrated zone; $a$
+  only decides how that drop is split between the direct and evolution terms.
+  Velocities are $V_1 = \SI{1e-4}{\milli\meter\per\second}$ and
+  $V_2 = \SI{2000}{\milli\meter\per\second}$.}
+  \label{tab:rsf-zones}
+  \begin{tabular}{@{}l r r r r l@{}}
+    \toprule
+    Zone & $a$ & $b$ & $a-b$ & $\mu(V_2)$ & Behaviour \\
+    \midrule
+    Loading & 0.004 & 0.004        & $0$          & 0.8000 & Velocity neutral \\
+    Middle  & 0.005 & 0.02581940   & $-0.0208194$ & 0.4500 & Velocity weakening \\
+    Leading & 0.008 & 0.005        & $+0.0030000$ & 0.8504 & Velocity strengthening \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Only the middle zone carries the rupture, so it is the one calibrated to reach
+$\mu_k$ at $V_2$, and the shared $D_c^{\mathrm{RSF}}$ is matched on it. The
+loading zone transmits load without weakening, and the leading zone acts as a
+barrier. Because $L_b \propto b^{-2}$, the middle zone also binds the mesh: at
+$L_b = \SI{3.63702}{\milli\meter}$ a \SI{0.5}{\milli\meter} cell gives $7.3$
+cells across the process zone, against a usual floor of five. $L_b$ is the
+quasi-static width and contracts as the rupture accelerates, so that margin
+should not be spent.
+
+\end{document}
