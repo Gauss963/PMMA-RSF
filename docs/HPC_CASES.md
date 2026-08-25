@@ -23,14 +23,14 @@ Preflight a case without constructing a mesh or creating a run directory:
 
 ```bash
 python scripts/run_case.py \
-  cases/rsf_0117_q4_explicit_10h.toml --preflight
+  cases/rsf_0118_q4_explicit_10h.toml --preflight
 ```
 
 Run it locally:
 
 ```bash
 python scripts/run_case.py \
-  cases/rsf_0117_q4_explicit_10h.toml
+  cases/rsf_0118_q4_explicit_10h.toml
 ```
 
 Submit the default 0.50 mm Q4 explicit production case on one H200:
@@ -38,6 +38,12 @@ Submit the default 0.50 mm Q4 explicit production case on one H200:
 ```bash
 sbatch slurm/PMMA-RSF-GPU.slurm
 ```
+
+The production driver currently executes one global JAX operator on one GPU.
+An H200 scaling pilot took 268.995 s with one visible GPU and 270.888 s with
+two visible GPUs (ratio 1.007); the second GPU remained idle. Therefore a
+single production case must request one GPU until spatial domain decomposition
+is implemented. Independent cases can still be assigned to separate GPUs.
 
 The Slurm allocation is capped at ten hours and requests one H200. Memory is
 left unspecified so each cluster applies its automatic per-core allocation.
@@ -49,7 +55,7 @@ integrator state and the exact HDF5 frame indices. Resume a cleanly
 checkpointed run with:
 
 ```bash
-sbatch --export=ALL,CASE_FILE=/work/gauss112/tatva/cases/rsf_0117_q4_explicit_10h.toml,RESUME_DIR=/work/gauss112/tatva/runs/TS0117 \
+sbatch --export=ALL,CASE_FILE=/work/gauss112/tatva/cases/rsf_0118_q4_explicit_10h.toml,RESUME_DIR=/work/gauss112/tatva/runs/TS0118 \
   slurm/PMMA-RSF-GPU.slurm
 ```
 
@@ -91,10 +97,18 @@ unchanged. Loading now stops only when the same station has `slip >= D_c` and
 0-6 mm corner-slip zone while stopping external work shortly after a dynamic
 front leaves the nucleation end.
 
-The current Q4 production case uses a 0.50 mm mesh, 1,443,584 displacement
-DOFs, an exact 15 ns step, 36,000 bulk shear frames, and 300,000 high-rate
-interface frames. Its RSF parameters are derived from the 5 mm cohesive-zone
-anchor in `CohesiveZoneModel/Lc_estimate.py`, including a shared
-`D_c=0.000376505 mm`. Its conservative uncompressed estimate is 1.253 TB; the
-calibrated LZF estimate is 1.196 TB and must remain below the configured
-1.20 TB dump limit.
+The current TS0118 Q4 production case uses a 0.50 mm mesh, 1,443,584
+displacement DOFs, an exact 10 ns step, 36,000 bulk shear frames, and 300,000
+high-rate interface frames. The 2.22 mm half-cosine loading is spread over the
+full 29 ms shear phase. A 1 mm pilot reached dynamic rupture at 21.208 ms,
+stopped the loading face at 25.051 ms and 2.120 mm when the front reached
+y=440 mm, and completed full-fault rupture at 25.188 ms. It also exhibited a
+1.997 ms stall near y=220 mm: this is an edge-loading-supported rupture, not a
+fully spontaneous one. Early-stop and 7 ms hold pilots arrested near
+y=137-147 mm, so the limitation must not be hidden by the case description.
+
+The RSF parameters remain derived from the 5 mm cohesive-zone anchor in
+`CohesiveZoneModel/Lc_estimate.py`, including shared
+`D_c=0.000376505 mm`. The loading zone has `a=b=0.004` and is velocity
+neutral. The conservative uncompressed estimate is 1.253 TB; the calibrated
+LZF estimate is 1.196 TB and must remain below the configured 1.20 TB limit.

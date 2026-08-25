@@ -39,6 +39,7 @@ EXPLICIT_Q4_CASE = (
 COHESIVE_CALIBRATED_CASE = (
     ROOT / "cases/rsf_0117_q4_explicit_10h.toml"
 )
+TS0118_CASE = ROOT / "cases/rsf_0118_q4_explicit_10h.toml"
 
 
 def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
@@ -256,6 +257,39 @@ def test_explicit_q4_case_relaxes_only_normal_loading_and_fits_dump_budget():
     assert estimate["estimated_uncompressed_tb"] == pytest.approx(1.2525534117)
     assert config.output.estimated_compression_ratio == pytest.approx(0.955)
     assert estimate["estimated_uncompressed_tb"] > config.output.maximum_dump_tb
+
+
+def test_ts0118_uses_terminal_ramp_exact_step_and_calibrated_rsf():
+    from dataclasses import replace
+
+    config = load_case_config(TS0118_CASE)
+    estimate = estimate_case_size(config)
+    coarse = replace(config, numerics=replace(config.numerics, mesh_size=20.0))
+    model = build_case_model(make_case(coarse), make_run_config(coarse))
+
+    assert config.loading.shear_displacement_final == pytest.approx(2.22)
+    assert config.loading.shear_ramp_time == pytest.approx(0.029)
+    assert config.loading.shear_phase_time == pytest.approx(0.029)
+    assert config.loading.quasistatic_shear_fraction == pytest.approx(0.0)
+    assert config.loading.stop_min_y == pytest.approx(440.0)
+    assert config.loading.stop_max_y == pytest.approx(440.0)
+    assert config.numerics.time_step == pytest.approx(10.0e-9)
+    assert model["dt"] == pytest.approx(10.0e-9)
+    assert model["dt_limiter"] == "configured"
+    assert model["dt"] < model["dt_stable_limit"]
+    assert config.rsf.loading.direct_effect == pytest.approx(
+        config.rsf.loading.state_effect
+    )
+    for name in ("loading", "middle", "leading"):
+        zone = getattr(config.rsf, name)
+        assert zone.characteristic_slip == pytest.approx(RSF_D_c / mm)
+    assert config.output.bulk_shear_frames == 36_000
+    assert config.output.interface_shear_frames == 300_000
+    assert estimate["estimated_uncompressed_tb"] == pytest.approx(1.2525534117)
+    assert (
+        estimate["estimated_uncompressed_tb"]
+        * config.output.estimated_compression_ratio
+    ) == pytest.approx(1.1961885082)
 
 
 def test_estimator_matches_remainder_cells_used_by_structured_mesh():

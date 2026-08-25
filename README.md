@@ -43,13 +43,13 @@ Validate mesh size, time step, frame counts, and dump budget without creating a
 run:
 
 ```bash
-python scripts/run_case.py cases/rsf_0117_q4_explicit_10h.toml --preflight
+python scripts/run_case.py cases/rsf_0118_q4_explicit_10h.toml --preflight
 ```
 
 Launch locally:
 
 ```bash
-python scripts/run_case.py cases/rsf_0117_q4_explicit_10h.toml
+python scripts/run_case.py cases/rsf_0118_q4_explicit_10h.toml
 ```
 
 Every new invocation atomically allocates the next label-free directory,
@@ -73,7 +73,7 @@ analysis suite later on a CPU node:
 
 ```bash
 python scripts/postprocess_velocity_weakening_run.py \
-  --input runs/TS0117/data/simulation.h5
+  --input runs/TS0118/data/simulation.h5
 ```
 
 The F1 Slurm scripts can render frames with many workers while retaining bounded
