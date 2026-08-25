@@ -33,12 +33,33 @@ delta_tau = tau_p - tau_r
 # ---------------------------------------------------------------------------
 # Linear slip weakening
 # ---------------------------------------------------------------------------
-def critical_nucleation_length(fracture_energy):
+def critical_nucleation_half_length(fracture_energy):
+    """Critical crack size for mode II plane strain.
+
+    Andrews (1976), doi:10.1029/JB081i032p05679.
+
+    CONVENTION: a HALF-length. A crack grows unstably once its half-length
+    exceeds it, so the smallest unstable patch measures 2 L_c end to end.
+    Comparisons against a physical patch width must use that full length.
+    """
     return (8 / np.pi) * elastic_factor * fracture_energy / delta_tau**2
 
 
 def quasistatic_cohesive_zone_size(fracture_energy):
-    # Kammer-McLaskey Eq. (A.12) in the f_II -> 1 limit.
+    """Quasi-static cohesive (slip-weakening) zone size for mode II.
+
+    Palmer & Rice (1973), doi:10.1098/rspa.1973.0040; quoted in this form by
+    Kammer & McLaskey (2019) Eq. (A.12), doi:10.1016/j.epsl.2019.01.031, in the
+    f_II -> 1 limit.
+
+    CONVENTION: a FULL zone length, not a half-length. It is the distance the
+    weakening zone extends back from the rupture tip, so it is compared
+    directly against a mesh size or a patch width with no factor of two.
+    Equivalent published forms, all identical to the expression below because
+    `elastic_factor` is a quarter of the plane-strain modulus E/(1-nu^2):
+        9 pi K^2 / (32 delta_tau^2)          with K^2 = Gamma E/(1-nu^2)
+        (9 pi / 16) (mu / (1-nu)) Gamma / delta_tau^2
+    """
     return (9 * np.pi / 8) * elastic_factor * fracture_energy / delta_tau**2
 
 
@@ -57,7 +78,8 @@ CZM_COHESIVE_ZONE_SIZE = 5 * mm
 D_c = cohesive_slip_for_cohesive_zone_size(CZM_COHESIVE_ZONE_SIZE)
 G = 0.5 * delta_tau * D_c
 X_c = quasistatic_cohesive_zone_size(G)
-L_c = critical_nucleation_length(G)
+L_c = critical_nucleation_half_length(G)
+L_c_full = 2.0 * L_c
 
 
 # ---------------------------------------------------------------------------
@@ -179,10 +201,14 @@ def process_zone_size(state_effect, characteristic_slip=None):
 def rsf_nucleation_lengths(direct_effect, state_effect, characteristic_slip=None):
     """Return (h*_RR, h*_RA) for one RSF zone.
 
-    ``h*_RR`` is the Rice & Ruina linear-stability size (accurate for a/b well
-    below 1) and ``h*_RA`` is the Rubin & Ampuero ageing-law size (accurate as
-    a/b approaches 1). Both are undefined where the zone is velocity
-    strengthening, so they come back as NaN when b <= a.
+    ``h*_RR`` is the Rice & Ruina linear-stability size, doi:10.1115/1.3167042
+    (accurate for a/b well below 1); ``h*_RA`` is the Rubin & Ampuero ageing-law
+    size, doi:10.1029/2005JB003686 (accurate as a/b approaches 1). Both are
+    undefined where the zone is velocity strengthening, so they come back as
+    NaN when b <= a.
+
+    CONVENTION: half-lengths. Rubin & Ampuero state their nucleation sizes as
+    half-lengths, which puts them on the same footing as Andrews' L_c above.
     """
     if characteristic_slip is None:
         characteristic_slip = RSF_D_c
@@ -230,7 +256,8 @@ def main():
     print(f"  Fracture energy (Gamma):          {G:>10.6g} J/m^2")
     print(f"  LSW cohesive slip (D_c):          {D_c / mm:>10.6g} mm")
     print(f"  Quasistatic cohesive zone (X_c):  {X_c / mm:>10.6g} mm")
-    print(f"  Critical nucleation length (L_c): {L_c / mm:>10.6g} mm")
+    print(f"  Critical half-length (L_c):       {L_c / mm:>10.6g} mm")
+    print(f"  Smallest unstable patch (2 L_c):  {L_c_full / mm:>10.6g} mm")
 
     print()
     print("=== Case 2: LSW -> RSF parameter conversion ===")
@@ -265,7 +292,7 @@ def main():
     print(f"Overshoot ratio (theta0 V2 / D_c):  {overshoot_ratio:>10.4g}")
     print(f"Breakdown integral:                 {breakdown_integral:>10.6g}")
     print(f"Target fracture energy (Gamma):     {G:>10.6g} J/m^2")
-    print(f"LSW cohesive slip (D_c):            {D_c / mm:>10.6g} mm")
+    print(f"LSW cohesive slip (D_c):            {D_c / mm:>10.7g} mm")
     print(f"RSF characteristic slip (D_c):      {RSF_D_c / mm:>10.6g} mm")
     print()
     print("The ageing law keeps drawing on its logarithmic tail long after a")
@@ -322,11 +349,11 @@ def main():
     print(f"LSW cohesive zone X_c:              {X_c / mm:>10.4g} mm")
     print(
         f"Coarsest mesh at {MINIMUM_CELLS_PER_PROCESS_ZONE} cells/L_b:      "
-        f"{binding / MINIMUM_CELLS_PER_PROCESS_ZONE / mm:>10.4g} mm"
+        f"{binding / MINIMUM_CELLS_PER_PROCESS_ZONE / mm:>11.4g} mm"
     )
     print(
         f"Production mesh {PRODUCTION_CELL_SIZE / mm:.2g} mm gives         "
-        f"{binding / PRODUCTION_CELL_SIZE:>10.1f} cells/L_b"
+        f"{binding / PRODUCTION_CELL_SIZE:>9.1f} cells/L_b"
     )
     print()
     print("L_b is quasi-static and contracts as the rupture speeds up, so aim")
@@ -335,7 +362,8 @@ def main():
     print("h* and L_c answer different questions -- h* is a linear-stability")
     print("size for a uniform RSF fault, L_c an energy balance for a")
     print("slip-weakening crack -- so read them as independent indicators")
-    print("rather than as a check on each other.")
+    print("rather than as a check on each other. Both are half-lengths, so")
+    print("they compare directly; X_c and L_b are full zone lengths.")
 
 
 if __name__ == "__main__":
