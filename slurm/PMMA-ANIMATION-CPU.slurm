@@ -1,21 +1,23 @@
 #!/bin/bash
 #SBATCH --account=MST113389
 #SBATCH --partition=hm112
-#SBATCH --job-name=PMMA-anim20
+#SBATCH --job-name=PMMA-anim56
 #SBATCH --output=/work1/gauss112/pmma-animation-%j.out
 #SBATCH --error=/work1/gauss112/pmma-animation-%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=20
-#SBATCH --time=12:00:00
+#SBATCH --cpus-per-task=56
+#SBATCH --hint=nomultithread
+#SBATCH --mem=672G
+#SBATCH --time=24:00:00
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=b09501028@ntu.edu.tw
 
 set -euo pipefail
 
-ROOT=/work1/gauss112/tatva
+ROOT=/work1/gauss112/PMMA-RSF
 RUN_DIR=${RUN_DIR:?Submit with --export=ALL,RUN_DIR=/path/to/TS####}
-WORKERS=${WORKERS:-20}
+WORKERS=${WORKERS:-56}
 PYTHON=/home/gauss112/.conda/envs/tatva/bin/python
 FFMPEG_DIR=/home/gauss112/.conda/envs/FFmpeg/bin
 RENDERER="$ROOT/scripts/render_stress_frames.py"

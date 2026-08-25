@@ -792,6 +792,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--no-swap-axes", dest="swap_axes", action="store_false")
     parser.set_defaults(swap_axes=False)
     parser.add_argument("--margin", type=float, default=8.0)
+    parser.add_argument(
+        "--ranges-only",
+        action="store_true",
+        help="Scan every frame and checkpoint global stress ranges without rendering.",
+    )
     return parser.parse_args()
 
 
@@ -801,6 +806,24 @@ def main() -> int:
     plot_dir = input_path.parent.parent / "Plot"
     frames_dir = args.frames_dir or plot_dir / "stress_triptych_frames"
     video = args.video or plot_dir / "stress_triptych_60fps.mp4"
+    if args.ranges_only:
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        range_cache = frames_dir / ".stress_range_cache.npz"
+        stress_ranges, disp_max = compute_global_ranges(
+            input_path,
+            stress_mode=args.stress_mode,
+            stress_percentile=args.stress_percentile,
+            cache_path=range_cache,
+        )
+        print(
+            {
+                "input": str(input_path),
+                "range_cache": str(range_cache),
+                "stress_ranges": stress_ranges,
+                "disp_max": disp_max,
+            }
+        )
+        return 0
     stats = render_all_frames(
         input_path,
         frames_dir,
