@@ -8,7 +8,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from evaluate_rsf_displacement_pilot import _front_metrics
+from evaluate_rsf_displacement_pilot import _front_metrics, _record_first_crossings
 
 
 def test_front_metrics_identify_clean_forward_rupture():
@@ -39,3 +39,23 @@ def test_front_metrics_detect_bilateral_or_backward_arrivals():
     assert metrics["forward_step_fraction"] == pytest.approx(0.5)
     assert metrics["backward_step_count"] == 2
     assert metrics["largest_backward_step_ms"] == pytest.approx(-0.1)
+
+
+def test_first_crossings_distinguish_creep_from_dynamic_rupture():
+    block = np.asarray(
+        [
+            [20.0, 5.0, 0.0],
+            [200.0, 30.0, 5.0],
+            [1200.0, 500.0, 20.0],
+            [900.0, 1500.0, 30.0],
+        ]
+    )
+    rows = np.asarray([10, 11, 12, 13])
+    low = np.full(3, -1, dtype=np.int64)
+    dynamic = np.full(3, -1, dtype=np.int64)
+
+    _record_first_crossings(block, rows, 10.0, low)
+    _record_first_crossings(block, rows, 1000.0, dynamic)
+
+    assert np.array_equal(low, [10, 11, 12])
+    assert np.array_equal(dynamic, [12, 13, -1])

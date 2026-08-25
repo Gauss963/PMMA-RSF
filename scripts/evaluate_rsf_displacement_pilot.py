@@ -18,7 +18,16 @@ def parse_args() -> argparse.Namespace:
         "--velocity-threshold",
         type=float,
         default=10.0,
-        help="Slip-rate threshold used to define rupture arrival [mm/s].",
+        help="Low slip-rate threshold used for rupture coverage [mm/s].",
+    )
+    parser.add_argument(
+        "--dynamic-velocity-threshold",
+        type=float,
+        default=1000.0,
+        help=(
+            "Slip-rate threshold used to measure the dynamic rupture-front "
+            "direction [mm/s]."
+        ),
     )
     parser.add_argument(
         "--output",
@@ -100,6 +109,25 @@ def _front_metrics(
     }
 
 
+def _record_first_crossings(
+    block: np.ndarray,
+    block_rows: np.ndarray,
+    threshold: float,
+    first_reached: np.ndarray,
+) -> None:
+    """Update first-arrival rows without retaining the full velocity history."""
+    unreached = first_reached < 0
+    if not np.any(unreached):
+        return
+    hits = block[:, unreached] >= threshold
+    hit_columns = np.any(hits, axis=0)
+    if not np.any(hit_columns):
+        return
+    local_first = np.argmax(hits[:, hit_columns], axis=0)
+    target_columns = np.flatnonzero(unreached)[hit_columns]
+    first_reached[target_columns] = block_rows[local_first]
+
+
 def _run_metadata(data_path: Path) -> tuple[float, float, float, str]:
     run_dir = data_path.parent.parent
     summary_path = run_dir / "stats" / "summary.json"
@@ -153,7 +181,11 @@ def _read_valid_history(
     return np.concatenate(blocks, axis=0), stopped_at_corrupt_chunk
 
 
-def evaluate(data_path: Path, velocity_threshold: float) -> dict[str, object]:
+def evaluate(
+    data_path: Path,
+    velocity_threshold: float,
+    dynamic_velocity_threshold: float = 1000.0,
+) -> dict[str, object]:
     data_path = data_path.expanduser().resolve()
     mesh_size, configured_displacement, ramp_time, metadata_source = _run_metadata(
         data_path
@@ -195,6 +227,7 @@ def evaluate(data_path: Path, velocity_threshold: float) -> dict[str, object]:
         interior_y = y[interior]
         peak_speed = np.zeros(interior_y.size, dtype=np.float64)
         first_reached = np.full(interior_y.size, -1, dtype=np.int64)
+        first_dynamic_reached = np.full(interior_y.size, -1, dtype=np.int64)
 
         slip_rate = group["slip_rate"]
         chunk_rows = 2048
@@ -208,16 +241,18 @@ def evaluate(data_path: Path, velocity_threshold: float) -> dict[str, object]:
             )[row_mask]
             block_rows = np.arange(start, stop, dtype=np.int64)[row_mask]
             peak_speed = np.maximum(peak_speed, np.max(block, axis=0))
-            unreached = first_reached < 0
-            if np.any(unreached):
-                hits = block[:, unreached] >= velocity_threshold
-                hit_columns = np.any(hits, axis=0)
-                if np.any(hit_columns):
-                    local_first = np.argmax(hits[:, hit_columns], axis=0)
-                    target_columns = np.flatnonzero(unreached)[hit_columns]
-                    first_reached[target_columns] = block_rows[local_first]
+            _record_first_crossings(
+                block, block_rows, velocity_threshold, first_reached
+            )
+            _record_first_crossings(
+                block,
+                block_rows,
+                dynamic_velocity_threshold,
+                first_dynamic_reached,
+            )
 
         speed_reached = first_reached >= 0
+        dynamic_speed_reached = first_dynamic_reached >= 0
         final_slip = np.asarray(
             group["cumulative_slip"][last_valid_index], dtype=np.float64
         )
@@ -231,6 +266,17 @@ def evaluate(data_path: Path, velocity_threshold: float) -> dict[str, object]:
         completion_index = (
             int(np.max(first_reached)) if np.all(speed_reached) else None
         )
+        dynamic_reached_indices = first_dynamic_reached[dynamic_speed_reached]
+        dynamic_onset_index = (
+            int(np.min(dynamic_reached_indices))
+            if dynamic_reached_indices.size
+            else None
+        )
+        dynamic_completion_index = (
+            int(np.max(first_dynamic_reached))
+            if np.all(dynamic_speed_reached)
+            else None
+        )
 
     elastic = np.abs(history[:, col["elastic_energy"]])
     interface = np.abs(history[:, col["interface_energy"]])
@@ -240,6 +286,11 @@ def evaluate(data_path: Path, velocity_threshold: float) -> dict[str, object]:
     pre_onset_stop = len(history) if onset_index is None else onset_index + 1
     pre_onset = shear_phase.copy()
     pre_onset[pre_onset_stop:] = False
+    pre_dynamic_onset_stop = (
+        len(history) if dynamic_onset_index is None else dynamic_onset_index + 1
+    )
+    pre_dynamic_onset = shear_phase.copy()
+    pre_dynamic_onset[pre_dynamic_onset_stop:] = False
 
     stopped_indices = np.flatnonzero(
         history[:, col["shear_loading_stopped"]] > 0.5
@@ -255,6 +306,12 @@ def evaluate(data_path: Path, velocity_threshold: float) -> dict[str, object]:
         history[:, col["time"]],
         shear_start_time,
     )
+    dynamic_front_metrics = _front_metrics(
+        interior_y,
+        first_dynamic_reached,
+        history[:, col["time"]],
+        shear_start_time,
+    )
     metrics: dict[str, object] = {
         "data_path": str(data_path),
         "metadata_source": metadata_source,
@@ -265,14 +322,37 @@ def evaluate(data_path: Path, velocity_threshold: float) -> dict[str, object]:
         "configured_shear_displacement_mm": configured_displacement,
         "configured_ramp_time_ms": 1.0e3 * ramp_time,
         "velocity_threshold_mm_s": velocity_threshold,
+        "dynamic_velocity_threshold_mm_s": dynamic_velocity_threshold,
         "full_rupture": full_rupture,
         "interior_station_count": int(np.count_nonzero(interior)),
         "velocity_coverage_fraction": float(np.mean(speed_reached)),
+        "dynamic_velocity_coverage_fraction": float(
+            np.mean(dynamic_speed_reached)
+        ),
         "dc_slip_coverage_fraction": float(np.mean(slip_reached)),
         "velocity_front_max_y_mm": float(np.max(reached_y)) if reached_y.size else None,
         "dc_slip_front_max_y_mm": float(np.max(weakened_y)) if weakened_y.size else None,
         "peak_slip_rate_mm_s": _distribution(peak_speed),
         "rupture_front": front_metrics,
+        "dynamic_rupture_front": dynamic_front_metrics,
+        "dynamic_rupture_onset_time_in_shear_ms": (
+            None
+            if dynamic_onset_index is None
+            else 1.0e3
+            * (
+                float(history[dynamic_onset_index, col["time"]])
+                - shear_start_time
+            )
+        ),
+        "dynamic_rupture_completion_time_in_shear_ms": (
+            None
+            if dynamic_completion_index is None
+            else 1.0e3
+            * (
+                float(history[dynamic_completion_index, col["time"]])
+                - shear_start_time
+            )
+        ),
         "rupture_onset_time_ms": (
             None
             if onset_index is None
@@ -336,6 +416,14 @@ def evaluate(data_path: Path, velocity_threshold: float) -> dict[str, object]:
                 None if onset_index is None else float(kinetic_ratio[onset_index])
             ),
             "max_pre_rupture": float(np.max(kinetic[pre_onset])),
+            "max_pre_dynamic_rupture_ratio": float(
+                np.max(kinetic_ratio[pre_dynamic_onset])
+            ),
+            "ratio_at_dynamic_rupture_onset": (
+                None
+                if dynamic_onset_index is None
+                else float(kinetic_ratio[dynamic_onset_index])
+            ),
             "max_dynamic_ratio_in_shear": float(np.max(kinetic_ratio[shear_phase])),
             "max_dynamic_in_shear": float(np.max(kinetic[shear_phase])),
         },
@@ -347,7 +435,17 @@ def main() -> int:
     args = parse_args()
     if args.velocity_threshold <= 0.0:
         raise ValueError("velocity-threshold must be positive.")
-    metrics = evaluate(args.data_path, args.velocity_threshold)
+    if args.dynamic_velocity_threshold <= 0.0:
+        raise ValueError("dynamic-velocity-threshold must be positive.")
+    if args.dynamic_velocity_threshold <= args.velocity_threshold:
+        raise ValueError(
+            "dynamic-velocity-threshold must exceed velocity-threshold."
+        )
+    metrics = evaluate(
+        args.data_path,
+        args.velocity_threshold,
+        args.dynamic_velocity_threshold,
+    )
     output = (
         args.output.expanduser().resolve()
         if args.output is not None
