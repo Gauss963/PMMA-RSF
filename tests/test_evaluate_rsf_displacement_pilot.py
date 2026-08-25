@@ -23,6 +23,9 @@ def test_front_metrics_identify_clean_forward_rupture():
     assert metrics["nucleation_y_max_mm"] == pytest.approx(1.0)
     assert metrics["forward_step_fraction"] == pytest.approx(1.0)
     assert metrics["backward_step_count"] == 0
+    assert metrics["largest_backward_step_ms"] is None
+    assert metrics["largest_backward_step_from_y_mm"] is None
+    assert metrics["largest_backward_step_to_y_mm"] is None
     assert metrics["rupture_duration_ms"] == pytest.approx(0.4)
     assert metrics["largest_forward_stall_from_y_mm"] == pytest.approx(2.0)
     assert metrics["largest_forward_stall_to_y_mm"] == pytest.approx(3.0)

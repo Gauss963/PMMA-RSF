@@ -94,7 +94,9 @@ def _front_metrics(
     )
     backward = steps < -sampling_tolerance_ms
     reached_arrivals = arrival_ms[reached]
-    largest_backward_index = int(np.argmin(steps)) if steps.size else None
+    largest_backward_index = (
+        int(np.argmin(steps)) if np.any(backward) else None
+    )
     largest_stall_index = int(np.argmax(steps)) if steps.size else None
     return {
         "nucleation_y_min_mm": float(np.min(station_y[nucleation])),
@@ -105,7 +107,9 @@ def _front_metrics(
         ),
         "backward_step_count": int(np.count_nonzero(backward)),
         "largest_backward_step_ms": (
-            float(np.min(steps)) if steps.size else None
+            float(steps[largest_backward_index])
+            if largest_backward_index is not None
+            else None
         ),
         "largest_backward_step_from_y_mm": (
             float(station_y[adjacent_left_indices[largest_backward_index]])
