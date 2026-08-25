@@ -39,8 +39,9 @@ Submit the default 0.50 mm Q4 explicit production case on one H200:
 sbatch slurm/PMMA-RSF-GPU.slurm
 ```
 
-The Slurm allocation is capped at ten hours and requests one H200 plus 200 GB
-of host memory. The runner checkpoints every ten minutes and exits cleanly
+The Slurm allocation is capped at ten hours and requests one H200. Memory is
+left unspecified so each cluster applies its automatic per-core allocation.
+The runner checkpoints every ten minutes and exits cleanly
 about 20 minutes before the allocation ends. Before creating the HDF5 dump it
 requires enough actual filesystem space for the conservative uncompressed
 estimate plus a 50 GB reserve. A checkpoint contains the complete explicit

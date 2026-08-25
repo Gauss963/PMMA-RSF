@@ -8,7 +8,6 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --hint=nomultithread
-#SBATCH --mem=144G
 #SBATCH --time=24:00:00
 #SBATCH --mail-type=ALL
 #SBATCH --mail-user=b09501028@ntu.edu.tw
@@ -60,6 +59,6 @@ EOF
 trap write_status EXIT
 
 echo "Analysis job ${SLURM_JOB_ID:-interactive} started at $started_at"
-echo "Host=$(hostname) allocated_cpus=${SLURM_CPUS_PER_TASK:-unset} memory=144G"
+echo "Host=$(hostname) allocated_cpus=${SLURM_CPUS_PER_TASK:-unset}"
 /usr/bin/time -v "$PYTHON" "$POSTPROCESS" --input "$INPUT" --dpi 260
 echo "Analysis completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
