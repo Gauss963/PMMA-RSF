@@ -205,6 +205,13 @@ def _plot_profile(
     output_dir: Path,
     dpi: int,
 ) -> tuple[Path, Path]:
+    loading_delta = float(direct_effect[0] - state_effect[0])
+    if np.isclose(loading_delta, 0.0, atol=1.0e-12):
+        loading_behavior = "velocity-neutral"
+    elif loading_delta < 0.0:
+        loading_behavior = "velocity-weakening"
+    else:
+        loading_behavior = "velocity-strengthening"
     figure, axes = plt.subplots(3, 1, figsize=(15.0, 9.0), sharex=True)
     figure.subplots_adjust(left=0.09, right=0.95, top=0.84, bottom=0.11, hspace=0.34)
     figure.suptitle(
@@ -218,7 +225,7 @@ def _plot_profile(
     figure.text(
         0.09,
         0.875,
-        "Loading-end velocity weakening, a velocity-weakening middle, and a "
+        f"Loading-end {loading_behavior}, a velocity-weakening middle, and a "
         "velocity-strengthening leading edge; transitions are half-cosine.",
         fontsize=13.3,
         color=MUTED,
