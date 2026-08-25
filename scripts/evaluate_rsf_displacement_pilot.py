@@ -72,13 +72,18 @@ def _front_metrics(
             "forward_step_fraction": None,
             "backward_step_count": 0,
             "largest_backward_step_ms": None,
+            "largest_backward_step_from_y_mm": None,
+            "largest_backward_step_to_y_mm": None,
             "largest_forward_stall_step_ms": None,
+            "largest_forward_stall_from_y_mm": None,
+            "largest_forward_stall_to_y_mm": None,
             "rupture_duration_ms": None,
         }
 
     earliest_frame = int(np.min(first_reached[reached]))
     nucleation = first_reached == earliest_frame
     adjacent = reached[:-1] & reached[1:]
+    adjacent_left_indices = np.flatnonzero(adjacent)
     steps = np.diff(arrival_ms)[adjacent]
     positive_frame_intervals = np.diff(frame_time)
     positive_frame_intervals = positive_frame_intervals[positive_frame_intervals > 0.0]
@@ -89,6 +94,8 @@ def _front_metrics(
     )
     backward = steps < -sampling_tolerance_ms
     reached_arrivals = arrival_ms[reached]
+    largest_backward_index = int(np.argmin(steps)) if steps.size else None
+    largest_stall_index = int(np.argmax(steps)) if steps.size else None
     return {
         "nucleation_y_min_mm": float(np.min(station_y[nucleation])),
         "nucleation_y_max_mm": float(np.max(station_y[nucleation])),
@@ -100,8 +107,28 @@ def _front_metrics(
         "largest_backward_step_ms": (
             float(np.min(steps)) if steps.size else None
         ),
+        "largest_backward_step_from_y_mm": (
+            float(station_y[adjacent_left_indices[largest_backward_index]])
+            if largest_backward_index is not None
+            else None
+        ),
+        "largest_backward_step_to_y_mm": (
+            float(station_y[adjacent_left_indices[largest_backward_index] + 1])
+            if largest_backward_index is not None
+            else None
+        ),
         "largest_forward_stall_step_ms": (
             float(np.max(steps)) if steps.size else None
+        ),
+        "largest_forward_stall_from_y_mm": (
+            float(station_y[adjacent_left_indices[largest_stall_index]])
+            if largest_stall_index is not None
+            else None
+        ),
+        "largest_forward_stall_to_y_mm": (
+            float(station_y[adjacent_left_indices[largest_stall_index] + 1])
+            if largest_stall_index is not None
+            else None
         ),
         "rupture_duration_ms": float(
             np.max(reached_arrivals) - np.min(reached_arrivals)
