@@ -8,7 +8,11 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from evaluate_rsf_displacement_pilot import _front_metrics, _record_first_crossings
+from evaluate_rsf_displacement_pilot import (
+    _front_metrics,
+    _record_first_crossings,
+    _record_first_profile_crossings,
+)
 
 
 def test_front_metrics_identify_clean_forward_rupture():
@@ -66,3 +70,20 @@ def test_first_crossings_distinguish_creep_from_dynamic_rupture():
 
     assert np.array_equal(low, [10, 11, 12])
     assert np.array_equal(dynamic, [12, 13, -1])
+
+
+def test_profile_crossings_apply_local_dc_thresholds():
+    block = np.asarray(
+        [
+            [0.2, 0.2, 0.2],
+            [0.4, 0.6, 0.8],
+            [0.8, 1.1, 1.2],
+        ]
+    )
+    rows = np.asarray([20, 21, 22])
+    thresholds = np.asarray([0.5, 1.0, 2.0])
+    first = np.full(3, -1, dtype=np.int64)
+
+    _record_first_profile_crossings(block, rows, thresholds, first)
+
+    assert np.array_equal(first, [22, 22, -1])

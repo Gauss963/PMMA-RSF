@@ -171,6 +171,25 @@ def _record_first_crossings(
     first_reached[target_columns] = block_rows[local_first]
 
 
+def _record_first_profile_crossings(
+    block: np.ndarray,
+    block_rows: np.ndarray,
+    thresholds: np.ndarray,
+    first_reached: np.ndarray,
+) -> None:
+    """Record first arrivals against a station-dependent threshold profile."""
+    unreached = first_reached < 0
+    if not np.any(unreached):
+        return
+    hits = block[:, unreached] >= thresholds[unreached]
+    hit_columns = np.any(hits, axis=0)
+    if not np.any(hit_columns):
+        return
+    local_first = np.argmax(hits[:, hit_columns], axis=0)
+    target_columns = np.flatnonzero(unreached)[hit_columns]
+    first_reached[target_columns] = block_rows[local_first]
+
+
 def _run_metadata(data_path: Path) -> tuple[float, float, float, str]:
     run_dir = data_path.parent.parent
     summary_path = run_dir / "stats" / "summary.json"
@@ -273,8 +292,14 @@ def evaluate(
         peak_speed = np.zeros(interior_y.size, dtype=np.float64)
         first_reached = np.full(interior_y.size, -1, dtype=np.int64)
         first_dynamic_reached = np.full(interior_y.size, -1, dtype=np.int64)
+        first_dc_reached = np.full(interior_y.size, -1, dtype=np.int64)
+        dc = np.asarray(
+            h5["interface/rsf_characteristic_slip_profile"], dtype=np.float64
+        )
+        interior_dc = dc[interior]
 
         slip_rate = group["slip_rate"]
+        cumulative_slip = group["cumulative_slip"]
         chunk_rows = 2048
         for start in range(shear_start_index, last_valid_index + 1, chunk_rows):
             stop = min(start + chunk_rows, last_valid_index + 1)
@@ -295,14 +320,20 @@ def evaluate(
                 dynamic_velocity_threshold,
                 first_dynamic_reached,
             )
+            slip_block = np.asarray(
+                cumulative_slip[start:stop, :], dtype=np.float64
+            )[:, interior][row_mask]
+            _record_first_profile_crossings(
+                slip_block,
+                block_rows,
+                interior_dc,
+                first_dc_reached,
+            )
 
         speed_reached = first_reached >= 0
         dynamic_speed_reached = first_dynamic_reached >= 0
         final_slip = np.asarray(
             group["cumulative_slip"][last_valid_index], dtype=np.float64
-        )
-        dc = np.asarray(
-            h5["interface/rsf_characteristic_slip_profile"], dtype=np.float64
         )
         slip_reached = final_slip[interior] >= dc[interior]
         full_rupture = bool(np.all(speed_reached) and np.all(slip_reached))
@@ -357,6 +388,12 @@ def evaluate(
         history[:, col["time"]],
         shear_start_time,
     )
+    dc_front_metrics = _front_metrics(
+        interior_y,
+        first_dc_reached,
+        history[:, col["time"]],
+        shear_start_time,
+    )
     front_core = (
         (interior_y >= front_core_min_y)
         & (interior_y <= front_core_max_y)
@@ -365,6 +402,13 @@ def evaluate(
     dynamic_core_front_metrics = _front_metrics(
         interior_y[front_core],
         first_dynamic_reached[front_core],
+        history[:, col["time"]],
+        shear_start_time,
+    )
+    dc_core_reached = first_dc_reached[front_core] >= 0
+    dc_core_front_metrics = _front_metrics(
+        interior_y[front_core],
+        first_dc_reached[front_core],
         history[:, col["time"]],
         shear_start_time,
     )
@@ -393,12 +437,15 @@ def evaluate(
             np.mean(dynamic_core_reached)
         ),
         "dc_slip_coverage_fraction": float(np.mean(slip_reached)),
+        "dc_core_slip_coverage_fraction": float(np.mean(dc_core_reached)),
         "velocity_front_max_y_mm": float(np.max(reached_y)) if reached_y.size else None,
         "dc_slip_front_max_y_mm": float(np.max(weakened_y)) if weakened_y.size else None,
         "peak_slip_rate_mm_s": _distribution(peak_speed),
         "rupture_front": front_metrics,
         "dynamic_rupture_front": dynamic_front_metrics,
         "dynamic_rupture_front_core": dynamic_core_front_metrics,
+        "dc_rupture_front": dc_front_metrics,
+        "dc_rupture_front_core": dc_core_front_metrics,
         "dynamic_rupture_onset_time_in_shear_ms": (
             None
             if dynamic_onset_index is None
