@@ -30,6 +30,18 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--front-core-min-y",
+        type=float,
+        default=30.0,
+        help="Lower y bound for propagation-only front metrics [mm].",
+    )
+    parser.add_argument(
+        "--front-core-max-y",
+        type=float,
+        default=460.0,
+        help="Upper y bound for propagation-only front metrics [mm].",
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -216,6 +228,8 @@ def evaluate(
     data_path: Path,
     velocity_threshold: float,
     dynamic_velocity_threshold: float = 1000.0,
+    front_core_min_y: float = 30.0,
+    front_core_max_y: float = 460.0,
 ) -> dict[str, object]:
     data_path = data_path.expanduser().resolve()
     mesh_size, configured_displacement, ramp_time, metadata_source = _run_metadata(
@@ -343,6 +357,17 @@ def evaluate(
         history[:, col["time"]],
         shear_start_time,
     )
+    front_core = (
+        (interior_y >= front_core_min_y)
+        & (interior_y <= front_core_max_y)
+    )
+    dynamic_core_reached = dynamic_speed_reached[front_core]
+    dynamic_core_front_metrics = _front_metrics(
+        interior_y[front_core],
+        first_dynamic_reached[front_core],
+        history[:, col["time"]],
+        shear_start_time,
+    )
     metrics: dict[str, object] = {
         "data_path": str(data_path),
         "metadata_source": metadata_source,
@@ -360,12 +385,20 @@ def evaluate(
         "dynamic_velocity_coverage_fraction": float(
             np.mean(dynamic_speed_reached)
         ),
+        "dynamic_core_y_bounds_mm": [
+            front_core_min_y,
+            front_core_max_y,
+        ],
+        "dynamic_core_velocity_coverage_fraction": float(
+            np.mean(dynamic_core_reached)
+        ),
         "dc_slip_coverage_fraction": float(np.mean(slip_reached)),
         "velocity_front_max_y_mm": float(np.max(reached_y)) if reached_y.size else None,
         "dc_slip_front_max_y_mm": float(np.max(weakened_y)) if weakened_y.size else None,
         "peak_slip_rate_mm_s": _distribution(peak_speed),
         "rupture_front": front_metrics,
         "dynamic_rupture_front": dynamic_front_metrics,
+        "dynamic_rupture_front_core": dynamic_core_front_metrics,
         "dynamic_rupture_onset_time_in_shear_ms": (
             None
             if dynamic_onset_index is None
@@ -472,10 +505,14 @@ def main() -> int:
         raise ValueError(
             "dynamic-velocity-threshold must exceed velocity-threshold."
         )
+    if args.front_core_max_y <= args.front_core_min_y:
+        raise ValueError("front-core-max-y must exceed front-core-min-y.")
     metrics = evaluate(
         args.data_path,
         args.velocity_threshold,
         args.dynamic_velocity_threshold,
+        args.front_core_min_y,
+        args.front_core_max_y,
     )
     output = (
         args.output.expanduser().resolve()
