@@ -44,6 +44,62 @@ def _distribution(values: np.ndarray) -> dict[str, float]:
     }
 
 
+def _front_metrics(
+    station_y: np.ndarray,
+    first_reached: np.ndarray,
+    frame_time: np.ndarray,
+    shear_start_time: float,
+) -> dict[str, object]:
+    """Measure whether first dynamic arrivals form one forward-moving front."""
+    reached = first_reached >= 0
+    arrival_ms = np.full(station_y.shape, np.nan, dtype=np.float64)
+    arrival_ms[reached] = 1.0e3 * (
+        frame_time[first_reached[reached]] - shear_start_time
+    )
+    if not np.any(reached):
+        return {
+            "nucleation_y_min_mm": None,
+            "nucleation_y_max_mm": None,
+            "forward_step_fraction": None,
+            "backward_step_count": 0,
+            "largest_backward_step_ms": None,
+            "largest_forward_stall_step_ms": None,
+            "rupture_duration_ms": None,
+        }
+
+    earliest_frame = int(np.min(first_reached[reached]))
+    nucleation = first_reached == earliest_frame
+    adjacent = reached[:-1] & reached[1:]
+    steps = np.diff(arrival_ms)[adjacent]
+    positive_frame_intervals = np.diff(frame_time)
+    positive_frame_intervals = positive_frame_intervals[positive_frame_intervals > 0.0]
+    sampling_tolerance_ms = (
+        0.5e3 * float(np.median(positive_frame_intervals))
+        if positive_frame_intervals.size
+        else 0.0
+    )
+    backward = steps < -sampling_tolerance_ms
+    reached_arrivals = arrival_ms[reached]
+    return {
+        "nucleation_y_min_mm": float(np.min(station_y[nucleation])),
+        "nucleation_y_max_mm": float(np.max(station_y[nucleation])),
+        "sampling_tolerance_ms": sampling_tolerance_ms,
+        "forward_step_fraction": (
+            float(np.mean(~backward)) if steps.size else None
+        ),
+        "backward_step_count": int(np.count_nonzero(backward)),
+        "largest_backward_step_ms": (
+            float(np.min(steps)) if steps.size else None
+        ),
+        "largest_forward_stall_step_ms": (
+            float(np.max(steps)) if steps.size else None
+        ),
+        "rupture_duration_ms": float(
+            np.max(reached_arrivals) - np.min(reached_arrivals)
+        ),
+    }
+
+
 def _run_metadata(data_path: Path) -> tuple[float, float, float, str]:
     run_dir = data_path.parent.parent
     summary_path = run_dir / "stats" / "summary.json"
@@ -193,6 +249,12 @@ def evaluate(data_path: Path, velocity_threshold: float) -> dict[str, object]:
 
     reached_y = interior_y[speed_reached]
     weakened_y = interior_y[slip_reached]
+    front_metrics = _front_metrics(
+        interior_y,
+        first_reached,
+        history[:, col["time"]],
+        shear_start_time,
+    )
     metrics: dict[str, object] = {
         "data_path": str(data_path),
         "metadata_source": metadata_source,
@@ -210,6 +272,7 @@ def evaluate(data_path: Path, velocity_threshold: float) -> dict[str, object]:
         "velocity_front_max_y_mm": float(np.max(reached_y)) if reached_y.size else None,
         "dc_slip_front_max_y_mm": float(np.max(weakened_y)) if weakened_y.size else None,
         "peak_slip_rate_mm_s": _distribution(peak_speed),
+        "rupture_front": front_metrics,
         "rupture_onset_time_ms": (
             None
             if onset_index is None
