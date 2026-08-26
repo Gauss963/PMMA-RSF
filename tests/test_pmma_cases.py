@@ -42,6 +42,7 @@ COHESIVE_CALIBRATED_CASE = (
 )
 TS0118_CASE = ROOT / "cases/rsf_0118_q4_explicit_10h.toml"
 TS0119_CASE = ROOT / "cases/rsf_0119_q4_explicit_10h.toml"
+TS0120_CASE = ROOT / "cases/rsf_0120_q4_fully_explicit_12h.toml"
 
 
 def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
@@ -311,6 +312,27 @@ def test_ts0119_uses_full_fault_stop_coverage_and_ts0116_displacement_margin():
         assert getattr(config.rsf, name).characteristic_slip == pytest.approx(
             RSF_D_c / mm
         )
+
+
+def test_ts0120_restores_undamped_fully_explicit_0116_normal_loading():
+    config = load_case_config(TS0120_CASE)
+    estimate = estimate_case_size(config)
+    run_config = make_run_config(config)
+
+    assert config.loading.normal_phase_time == pytest.approx(0.040)
+    assert config.loading.normal_ramp_time == pytest.approx(0.020)
+    assert config.loading.normal_relaxation_time is None
+    assert config.loading.quasistatic_damping_time is None
+    assert config.loading.effective_normal_relaxation_time is None
+    assert config.loading.relax_tangential_contact_during_normal is False
+    assert config.loading.quasistatic_shear_fraction == pytest.approx(0.0)
+    assert run_config.normal_relaxation_time is None
+    assert run_config.relax_tangential_contact_during_normal is False
+    assert estimate["configured_steps_estimate"] == 6_900_000
+    assert config.output.bulk_normal_frames == 2
+    assert config.output.bulk_shear_frames == 36_000
+    assert config.output.interface_normal_frames == 100
+    assert config.output.interface_shear_frames == 300_000
 
 
 def test_estimator_matches_remainder_cells_used_by_structured_mesh():

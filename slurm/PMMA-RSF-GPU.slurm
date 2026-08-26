@@ -8,7 +8,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=12
 #SBATCH --gres=gpu:1
-#SBATCH --time=10:00:00
+#SBATCH --time=12:00:00
 #SBATCH --signal=B:USR1@600
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=b09501028@ntu.edu.tw
@@ -17,10 +17,10 @@ set -euo pipefail
 
 ROOT=/work/gauss112/tatva
 PYTHON=/home/gauss112/.conda/envs/tatva/bin/python
-CASE_FILE=${CASE_FILE:-$ROOT/cases/rsf_0119_q4_explicit_10h.toml}
+CASE_FILE=${CASE_FILE:-$ROOT/cases/rsf_0120_q4_fully_explicit_12h.toml}
 RESUME_DIR=${RESUME_DIR:-}
 RUN_DIR_OVERRIDE=${RUN_DIR_OVERRIDE:-}
-RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-34800}
+RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-42000}
 if [[ -n "$RESUME_DIR" ]]; then
   RUN_DIR="$RESUME_DIR"
   RESUME_ARGS=(--resume)

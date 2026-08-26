@@ -23,14 +23,14 @@ Preflight a case without constructing a mesh or creating a run directory:
 
 ```bash
 python scripts/run_case.py \
-  cases/rsf_0119_q4_explicit_10h.toml --preflight
+  cases/rsf_0120_q4_fully_explicit_12h.toml --preflight
 ```
 
 Run it locally:
 
 ```bash
 python scripts/run_case.py \
-  cases/rsf_0119_q4_explicit_10h.toml
+  cases/rsf_0120_q4_fully_explicit_12h.toml
 ```
 
 Submit the default 0.50 mm Q4 explicit production case on one H200:
@@ -55,7 +55,7 @@ integrator state and the exact HDF5 frame indices. Resume a cleanly
 checkpointed run with:
 
 ```bash
-sbatch --export=ALL,CASE_FILE=/work/gauss112/tatva/cases/rsf_0119_q4_explicit_10h.toml,RESUME_DIR=/work/gauss112/tatva/runs/TS0119 \
+sbatch --export=ALL,CASE_FILE=/work/gauss112/tatva/cases/rsf_0120_q4_fully_explicit_12h.toml,RESUME_DIR=/work/gauss112/tatva/runs/TS0120 \
   slurm/PMMA-RSF-GPU.slurm
 ```
 
@@ -97,12 +97,16 @@ unchanged. Loading now stops only when the same station has `slip >= D_c` and
 0-6 mm corner-slip zone while stopping external work shortly after a dynamic
 front leaves the nucleation end.
 
-The current TS0119 Q4 production case uses a 0.50 mm mesh, 1,443,584
+The current TS0120 Q4 production case uses a 0.50 mm mesh, 1,443,584
 displacement DOFs, an exact 10 ns step, 36,000 bulk shear frames, and 300,000
-high-rate interface frames. Tangential loading starts from zero in explicit
-dynamics and follows a 2.45 mm half-cosine over the full 29 ms shear phase.
+high-rate interface frames. It restores the 0116 normal-loading history as
+undamped explicit dynamics: a 20 ms ramp followed by 20 ms at the prescribed
+normal displacement, with friction active and no velocity reset at the shear
+handoff. Only two normal bulk frames and 100 normal interface frames are saved.
+Tangential loading starts from zero and follows a 2.45 mm half-cosine over the
+full 29 ms shear phase.
 TS0118 showed that a single y=440 mm station can be activated by an independent
-far-edge disturbance before the loading-end rupture reaches it. TS0119 therefore
+far-edge disturbance before the loading-end rupture reaches it. TS0120 therefore
 stops only after every interior station from y=0.5 to 499 mm has accumulated at
 least D_c while a dynamic slip rate above 500 mm/s remains in that interval. If
 that swept-front condition is never met, the half-cosine reaches zero velocity
