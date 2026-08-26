@@ -23,14 +23,14 @@ Preflight a case without constructing a mesh or creating a run directory:
 
 ```bash
 python scripts/run_case.py \
-  cases/rsf_0120_q4_fully_explicit_12h.toml --preflight
+  cases/rsf_0121_q4_slow_strong_vs_12h.toml --preflight
 ```
 
 Run it locally:
 
 ```bash
 python scripts/run_case.py \
-  cases/rsf_0120_q4_fully_explicit_12h.toml
+  cases/rsf_0121_q4_slow_strong_vs_12h.toml
 ```
 
 Submit the default 0.50 mm Q4 explicit production case on one H200:
@@ -45,7 +45,7 @@ two visible GPUs (ratio 1.007); the second GPU remained idle. Therefore a
 single production case must request one GPU until spatial domain decomposition
 is implemented. Independent cases can still be assigned to separate GPUs.
 
-The Slurm allocation is capped at ten hours and requests one H200. Memory is
+The Slurm allocation is capped at twelve hours and requests one H200. Memory is
 left unspecified so each cluster applies its automatic per-core allocation.
 The runner checkpoints every ten minutes and exits cleanly
 about 20 minutes before the allocation ends. Before creating the HDF5 dump it
@@ -55,7 +55,7 @@ integrator state and the exact HDF5 frame indices. Resume a cleanly
 checkpointed run with:
 
 ```bash
-sbatch --export=ALL,CASE_FILE=/work/gauss112/tatva/cases/rsf_0120_q4_fully_explicit_12h.toml,RESUME_DIR=/work/gauss112/tatva/runs/TS0120 \
+sbatch --export=ALL,CASE_FILE=/work/gauss112/tatva/cases/rsf_0121_q4_slow_strong_vs_12h.toml,RESUME_DIR=/work/gauss112/tatva/runs/TS0121 \
   slurm/PMMA-RSF-GPU.slurm
 ```
 
@@ -117,3 +117,14 @@ The RSF parameters remain derived from the 5 mm cohesive-zone anchor in
 `D_c=0.000376505 mm`. The loading zone has `a=b=0.004` and is velocity
 neutral. The conservative uncompressed estimate is 1.253 TB; the calibrated
 LZF estimate is 1.196 TB and must remain below the configured 1.20 TB limit.
+
+TS0121 keeps the TS0120 fully explicit 40 ms normal history and 2.45 mm shear
+target, but lengthens the half-cosine shear ramp from 29 to 43 ms. The bulk and
+interface shear targets increase to 53,379 and 444,828 frames, respectively,
+so their physical sampling intervals remain approximately 0.806 and 0.0967
+microseconds. The leading VS plateau is 40 mm long with `a-b=+0.006`; its 10 mm
+half-cosine transition begins at y=450 mm and covers the TS0120 reverse nucleus
+near y=458 mm. TS0121 omits bulk strain from HDF5 because no production
+post-processor consumes it; displacement, velocity, stress, and all interface
+fields remain complete. This lowers the calibrated dump estimate to 1.187 TB
+without changing the solver or stress calculation.

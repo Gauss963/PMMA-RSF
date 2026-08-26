@@ -43,6 +43,7 @@ COHESIVE_CALIBRATED_CASE = (
 TS0118_CASE = ROOT / "cases/rsf_0118_q4_explicit_10h.toml"
 TS0119_CASE = ROOT / "cases/rsf_0119_q4_explicit_10h.toml"
 TS0120_CASE = ROOT / "cases/rsf_0120_q4_fully_explicit_12h.toml"
+TS0121_CASE = ROOT / "cases/rsf_0121_q4_slow_strong_vs_12h.toml"
 
 
 def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
@@ -333,6 +334,78 @@ def test_ts0120_restores_undamped_fully_explicit_0116_normal_loading():
     assert config.output.bulk_shear_frames == 36_000
     assert config.output.interface_normal_frames == 100
     assert config.output.interface_shear_frames == 300_000
+
+
+def test_ts0121_slows_shear_and_strengthens_leading_edge_at_full_output_rate():
+    config = load_case_config(TS0121_CASE)
+    estimate = estimate_case_size(config)
+
+    assert config.loading.normal_phase_time == pytest.approx(0.040)
+    assert config.loading.normal_ramp_time == pytest.approx(0.020)
+    assert config.loading.effective_normal_relaxation_time is None
+    assert config.loading.shear_phase_time == pytest.approx(0.043)
+    assert config.loading.shear_ramp_time == pytest.approx(0.043)
+    assert config.rsf.leading_length == pytest.approx(40.0)
+    assert config.rsf.leading.direct_effect == pytest.approx(0.010)
+    assert config.rsf.leading.state_effect == pytest.approx(0.004)
+    assert config.rsf.leading.direct_effect - config.rsf.leading.state_effect == (
+        pytest.approx(0.006)
+    )
+    assert config.output.store_bulk_strain is False
+    assert config.output.bulk_shear_frames == 53_379
+    assert config.output.interface_shear_frames == 444_828
+    assert 0.043 / config.output.bulk_shear_frames == pytest.approx(
+        0.029 / 36_000, rel=2.0e-5
+    )
+    assert 0.043 / config.output.interface_shear_frames == pytest.approx(
+        0.029 / 300_000, rel=2.0e-5
+    )
+    assert estimate["configured_steps_estimate"] == 8_300_000
+    assert (
+        estimate["estimated_uncompressed_tb"]
+        * config.output.estimated_compression_ratio
+        < config.output.maximum_dump_tb
+    )
+
+
+def test_regularized_dump_can_omit_unused_bulk_strain(tmp_path):
+    from dataclasses import replace
+
+    config = load_case_config(PRODUCTION_CASE)
+    config = replace(
+        config,
+        numerics=replace(config.numerics, mesh_size=100.0, cfl=0.2),
+        loading=replace(
+            config.loading,
+            normal_phase_time=2.0e-5,
+            normal_ramp_time=1.0e-5,
+            shear_phase_time=2.0e-5,
+            shear_ramp_time=1.0e-5,
+            normal_displacement=1.0e-3,
+            shear_displacement_final=1.0e-3,
+            stop_on_rupture=False,
+        ),
+    )
+    output = tmp_path / "without-strain.h5"
+
+    run_simulation_dumped(
+        make_case(config),
+        make_run_config(config),
+        output,
+        frames_per_phase=2,
+        shear_frames_per_phase=3,
+        interface_frames_per_phase=4,
+        shear_interface_frames_per_phase=6,
+        include_initial_frame=False,
+        store_bulk_strain=False,
+    )
+
+    with h5py.File(output, "r") as h5:
+        assert "strain" not in h5["moving"]
+        assert "strain" not in h5["stationary"]
+        assert "stress" in h5["moving"]
+        assert "stress" in h5["stationary"]
+        assert h5.attrs["store_bulk_strain"] == 0
 
 
 def test_estimator_matches_remainder_cells_used_by_structured_mesh():

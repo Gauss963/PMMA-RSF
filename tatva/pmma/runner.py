@@ -368,6 +368,7 @@ def run_case(
             shear_interface_frames_per_phase=config.output.interface_shear_frames,
             compression=config.output.compression,
             include_initial_frame=config.output.include_initial_frame,
+            store_bulk_strain=config.output.store_bulk_strain,
             checkpoint_path=run_dir / "checkpoint.npz",
             checkpoint_interval_seconds=(
                 60.0 * config.output.checkpoint_interval_minutes

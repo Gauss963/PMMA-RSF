@@ -77,6 +77,7 @@ class OutputConfig:
     include_initial_frame: bool
     maximum_dump_tb: float
     checkpoint_interval_minutes: float
+    store_bulk_strain: bool = True
 
 
 @dataclass(frozen=True)
@@ -269,6 +270,7 @@ def load_case_config(path: str | Path) -> PMMACaseConfig:
             checkpoint_interval_minutes=float(
                 output.get("checkpoint_interval_minutes", 20.0)
             ),
+            store_bulk_strain=bool(output.get("store_bulk_strain", True)),
         ),
         rsf=RSFConfig(
             initial_friction=float(rsf["initial_friction"]),
