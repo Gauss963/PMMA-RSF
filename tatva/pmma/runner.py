@@ -135,6 +135,7 @@ def make_run_config(config: PMMACaseConfig) -> RunConfig:
         shear_loading_stop_velocity=loading.stop_velocity,
         shear_loading_stop_min_y=loading.stop_min_y,
         shear_loading_stop_max_y=loading.stop_max_y,
+        shear_loading_stop_coverage_fraction=loading.stop_coverage_fraction,
         lock_shear_edge_during_normal=loading.lock_shear_edge_during_normal,
         relax_tangential_contact_during_normal=(
             loading.relax_tangential_contact_during_normal

@@ -38,6 +38,7 @@ class LoadingConfig:
     stop_velocity: float | None
     stop_min_y: float
     stop_max_y: float
+    stop_coverage_fraction: float | None
     lock_shear_edge_during_normal: bool
     relax_tangential_contact_during_normal: bool
     quasistatic_shear_fraction: float
@@ -195,6 +196,11 @@ def load_case_config(path: str | Path) -> PMMACaseConfig:
             ),
             stop_min_y=float(loading["stop_min_y"]),
             stop_max_y=float(loading["stop_max_y"]),
+            stop_coverage_fraction=(
+                None
+                if "stop_coverage_fraction" not in loading
+                else float(loading["stop_coverage_fraction"])
+            ),
             lock_shear_edge_during_normal=bool(
                 loading["lock_shear_edge_during_normal"]
             ),
@@ -338,6 +344,11 @@ def _validate(config: PMMACaseConfig) -> None:
         raise ValueError("loading.stop_velocity must be positive.")
     if config.loading.stop_min_y > config.loading.stop_max_y:
         raise ValueError("loading.stop_min_y cannot exceed stop_max_y.")
+    if (
+        config.loading.stop_coverage_fraction is not None
+        and not 0.0 < config.loading.stop_coverage_fraction <= 1.0
+    ):
+        raise ValueError("loading.stop_coverage_fraction must be in (0, 1].")
     if not 0.0 <= config.loading.quasistatic_shear_fraction < 1.0:
         raise ValueError("quasistatic_shear_fraction must be in [0, 1).")
     relaxation_time = config.loading.effective_normal_relaxation_time

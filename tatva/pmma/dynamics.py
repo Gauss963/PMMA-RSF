@@ -114,6 +114,7 @@ class RunConfig:
     shear_loading_stop_velocity: float | None = None
     shear_loading_stop_min_y: float | None = None
     shear_loading_stop_max_y: float | None = None
+    shear_loading_stop_coverage_fraction: float | None = None
     relax_tangential_contact_during_normal: bool = False
     lock_shear_edge_during_normal: bool = False
     shear_scale: float = 1.0
@@ -907,6 +908,41 @@ def _shear_loading_stop_candidates(
     return candidates
 
 
+def _shear_loading_stop_reached(
+    cumulative_slip: jax.Array,
+    slip_rate: jax.Array,
+    stop_mask: jax.Array,
+    critical_slip_profile: jax.Array,
+    stop_slip: jax.Array,
+    uses_critical_profile: bool,
+    stop_velocity: jax.Array | None,
+    coverage_fraction: float | None,
+) -> jax.Array:
+    """Evaluate either the legacy point trigger or a swept-front trigger."""
+    candidates = _shear_loading_stop_candidates(
+        cumulative_slip,
+        slip_rate,
+        stop_mask,
+        critical_slip_profile,
+        stop_slip,
+        uses_critical_profile,
+        stop_velocity,
+    )
+    if coverage_fraction is None:
+        return jnp.any(candidates)
+
+    slip_limit = critical_slip_profile if uses_critical_profile else stop_slip
+    slipped = stop_mask & (cumulative_slip >= slip_limit)
+    monitored_count = jnp.maximum(jnp.sum(stop_mask), 1)
+    swept_fraction = jnp.sum(slipped) / monitored_count
+    velocity_reached = (
+        jnp.asarray(True)
+        if stop_velocity is None
+        else jnp.any(stop_mask & (jnp.abs(slip_rate) >= stop_velocity))
+    )
+    return (swept_fraction >= coverage_fraction) & velocity_reached
+
+
 def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
     dtype = jnp.float32 if config.dtype == "float32" else jnp.float64
     dimension = int(config.dimension)
@@ -1412,6 +1448,18 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         and shear_loading_stop_velocity <= 0.0
     ):
         raise ValueError("shear_loading_stop_velocity must be positive.")
+    shear_loading_stop_coverage_fraction = (
+        None
+        if config.shear_loading_stop_coverage_fraction is None
+        else float(config.shear_loading_stop_coverage_fraction)
+    )
+    if (
+        shear_loading_stop_coverage_fraction is not None
+        and not 0.0 < shear_loading_stop_coverage_fraction <= 1.0
+    ):
+        raise ValueError(
+            "shear_loading_stop_coverage_fraction must be in (0, 1]."
+        )
     stop_min_y = (
         -math.inf
         if config.shear_loading_stop_min_y is None
@@ -1721,6 +1769,9 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         ),
         "shear_loading_stop_min_y": config.shear_loading_stop_min_y,
         "shear_loading_stop_max_y": config.shear_loading_stop_max_y,
+        "shear_loading_stop_coverage_fraction": (
+            shear_loading_stop_coverage_fraction
+        ),
         "shear_loading_stop_mask": shear_loading_stop_mask,
         "relax_tangential_contact_during_normal": bool(
             config.relax_tangential_contact_during_normal
@@ -1802,6 +1853,9 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
     shear_loading_stop_uses_critical_profile = bool(
         model["shear_loading_stop_uses_critical_profile"]
     )
+    shear_loading_stop_coverage_fraction = model[
+        "shear_loading_stop_coverage_fraction"
+    ]
     shear_loading_stop_mask = model["shear_loading_stop_mask"]
     relax_tangential_contact_during_normal = bool(
         model["relax_tangential_contact_during_normal"]
@@ -2105,16 +2159,15 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         ) = carry
         normal_scale = loading[0]
         shear_traction = loading[1]
-        loading_stop_reached = jnp.any(
-            _shear_loading_stop_candidates(
-                cum_slip,
-                slip_rate,
-                shear_loading_stop_mask,
-                critical_slip_profile,
-                shear_loading_stop_slip,
-                shear_loading_stop_uses_critical_profile,
-                shear_loading_stop_velocity,
-            )
+        loading_stop_reached = _shear_loading_stop_reached(
+            cum_slip,
+            slip_rate,
+            shear_loading_stop_mask,
+            critical_slip_profile,
+            shear_loading_stop_slip,
+            shear_loading_stop_uses_critical_profile,
+            shear_loading_stop_velocity,
+            shear_loading_stop_coverage_fraction,
         )
         stop_now = (
             allow_loading_stop and stop_shear_loading and loading_stop_reached
@@ -2363,6 +2416,9 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         ],
         "shear_loading_stop_min_y": model["shear_loading_stop_min_y"],
         "shear_loading_stop_max_y": model["shear_loading_stop_max_y"],
+        "shear_loading_stop_coverage_fraction": model[
+            "shear_loading_stop_coverage_fraction"
+        ],
         "shear_loading_stop_time": loading_stop_time,
         "shear_loading_stop_time_in_shear": loading_stop_time_in_shear,
         "shear_loading_stop_displacement": loading_stop_displacement,
@@ -2580,6 +2636,9 @@ def run_simulation_dumped(
     shear_loading_stop_uses_critical_profile = bool(
         model["shear_loading_stop_uses_critical_profile"]
     )
+    shear_loading_stop_coverage_fraction = model[
+        "shear_loading_stop_coverage_fraction"
+    ]
     shear_loading_stop_mask = model["shear_loading_stop_mask"]
     relax_tangential_contact_during_normal = bool(
         model["relax_tangential_contact_during_normal"]
@@ -3011,16 +3070,15 @@ def run_simulation_dumped(
         ) = carry
         normal_scale = loading[0]
         shear_traction = loading[1]
-        loading_stop_reached = jnp.any(
-            _shear_loading_stop_candidates(
-                cum_slip,
-                slip_rate,
-                shear_loading_stop_mask,
-                critical_slip_profile,
-                shear_loading_stop_slip,
-                shear_loading_stop_uses_critical_profile,
-                shear_loading_stop_velocity,
-            )
+        loading_stop_reached = _shear_loading_stop_reached(
+            cum_slip,
+            slip_rate,
+            shear_loading_stop_mask,
+            critical_slip_profile,
+            shear_loading_stop_slip,
+            shear_loading_stop_uses_critical_profile,
+            shear_loading_stop_velocity,
+            shear_loading_stop_coverage_fraction,
         )
         stop_now = (
             allow_loading_stop and stop_shear_loading and loading_stop_reached
@@ -3629,6 +3687,10 @@ def run_simulation_dumped(
             h5.attrs["shear_loading_stop_max_y"] = model[
                 "shear_loading_stop_max_y"
             ]
+        if model["shear_loading_stop_coverage_fraction"] is not None:
+            h5.attrs["shear_loading_stop_coverage_fraction"] = model[
+                "shear_loading_stop_coverage_fraction"
+            ]
         h5.attrs["critical_slip"] = model["critical_slip"]
         h5.attrs["mu_k"] = model["mu_k"]
         h5.attrs["loading_edge_nucleation_length"] = model[
@@ -4235,6 +4297,9 @@ def run_simulation_dumped(
         ],
         "shear_loading_stop_min_y": model["shear_loading_stop_min_y"],
         "shear_loading_stop_max_y": model["shear_loading_stop_max_y"],
+        "shear_loading_stop_coverage_fraction": model[
+            "shear_loading_stop_coverage_fraction"
+        ],
         "shear_loading_stop_time": loading_stop_time,
         "shear_loading_stop_time_in_shear": loading_stop_time_in_shear,
         "shear_loading_stop_displacement": loading_stop_displacement,

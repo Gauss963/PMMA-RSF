@@ -23,14 +23,14 @@ Preflight a case without constructing a mesh or creating a run directory:
 
 ```bash
 python scripts/run_case.py \
-  cases/rsf_0118_q4_explicit_10h.toml --preflight
+  cases/rsf_0119_q4_explicit_10h.toml --preflight
 ```
 
 Run it locally:
 
 ```bash
 python scripts/run_case.py \
-  cases/rsf_0118_q4_explicit_10h.toml
+  cases/rsf_0119_q4_explicit_10h.toml
 ```
 
 Submit the default 0.50 mm Q4 explicit production case on one H200:
@@ -55,7 +55,7 @@ integrator state and the exact HDF5 frame indices. Resume a cleanly
 checkpointed run with:
 
 ```bash
-sbatch --export=ALL,CASE_FILE=/work/gauss112/tatva/cases/rsf_0118_q4_explicit_10h.toml,RESUME_DIR=/work/gauss112/tatva/runs/TS0118 \
+sbatch --export=ALL,CASE_FILE=/work/gauss112/tatva/cases/rsf_0119_q4_explicit_10h.toml,RESUME_DIR=/work/gauss112/tatva/runs/TS0119 \
   slurm/PMMA-RSF-GPU.slurm
 ```
 
@@ -97,15 +97,16 @@ unchanged. Loading now stops only when the same station has `slip >= D_c` and
 0-6 mm corner-slip zone while stopping external work shortly after a dynamic
 front leaves the nucleation end.
 
-The current TS0118 Q4 production case uses a 0.50 mm mesh, 1,443,584
+The current TS0119 Q4 production case uses a 0.50 mm mesh, 1,443,584
 displacement DOFs, an exact 10 ns step, 36,000 bulk shear frames, and 300,000
-high-rate interface frames. The 2.22 mm half-cosine loading is spread over the
-full 29 ms shear phase. A 1 mm pilot reached dynamic rupture at 21.208 ms,
-stopped the loading face at 25.051 ms and 2.120 mm when the front reached
-y=440 mm, and completed full-fault rupture at 25.188 ms. It also exhibited a
-1.997 ms stall near y=220 mm: this is an edge-loading-supported rupture, not a
-fully spontaneous one. Early-stop and 7 ms hold pilots arrested near
-y=137-147 mm, so the limitation must not be hidden by the case description.
+high-rate interface frames. Tangential loading starts from zero in explicit
+dynamics and follows a 2.45 mm half-cosine over the full 29 ms shear phase.
+TS0118 showed that a single y=440 mm station can be activated by an independent
+far-edge disturbance before the loading-end rupture reaches it. TS0119 therefore
+stops only after every interior station from y=0.5 to 499 mm has accumulated at
+least D_c while a dynamic slip rate above 500 mm/s remains in that interval. If
+that swept-front condition is never met, the half-cosine reaches zero velocity
+naturally instead of freezing the loading face on a false local event.
 
 The RSF parameters remain derived from the 5 mm cohesive-zone anchor in
 `CohesiveZoneModel/Lc_estimate.py`, including shared

@@ -8,6 +8,7 @@ import pytest
 from tatva.pmma.dynamics import (
     SimulationCheckpointed,
     _shear_loading_stop_candidates,
+    _shear_loading_stop_reached,
     build_case_model,
     quadrature_weighted_element_average,
     run_simulation_dumped,
@@ -40,6 +41,7 @@ COHESIVE_CALIBRATED_CASE = (
     ROOT / "cases/rsf_0117_q4_explicit_10h.toml"
 )
 TS0118_CASE = ROOT / "cases/rsf_0118_q4_explicit_10h.toml"
+TS0119_CASE = ROOT / "cases/rsf_0119_q4_explicit_10h.toml"
 
 
 def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
@@ -292,6 +294,25 @@ def test_ts0118_uses_terminal_ramp_exact_step_and_calibrated_rsf():
     ) == pytest.approx(1.1961885082)
 
 
+def test_ts0119_uses_full_fault_stop_coverage_and_ts0116_displacement_margin():
+    config = load_case_config(TS0119_CASE)
+    run_config = make_run_config(config)
+
+    assert config.loading.shear_displacement_final == pytest.approx(2.45)
+    assert config.loading.shear_ramp_time == pytest.approx(0.029)
+    assert config.loading.quasistatic_shear_fraction == pytest.approx(0.0)
+    assert config.loading.stop_velocity == pytest.approx(500.0)
+    assert config.loading.stop_min_y == pytest.approx(0.5)
+    assert config.loading.stop_max_y == pytest.approx(499.0)
+    assert config.loading.stop_coverage_fraction == pytest.approx(1.0)
+    assert run_config.shear_loading_stop_coverage_fraction == pytest.approx(1.0)
+    assert config.numerics.time_step == pytest.approx(10.0e-9)
+    for name in ("loading", "middle", "leading"):
+        assert getattr(config.rsf, name).characteristic_slip == pytest.approx(
+            RSF_D_c / mm
+        )
+
+
 def test_estimator_matches_remainder_cells_used_by_structured_mesh():
     from dataclasses import replace
 
@@ -363,6 +384,38 @@ def test_loading_stop_trigger_requires_slip_rate_at_a_monitored_station():
         np.asarray(10.0, dtype=np.float32),
     )
     assert np.array_equal(np.asarray(candidates), [False, True, False])
+
+
+def test_loading_stop_coverage_rejects_an_isolated_far_edge_event():
+    cumulative_slip = np.asarray([0.008, 0.008, 0.001, 0.008], dtype=np.float32)
+    slip_rate = np.asarray([0.0, 0.0, 0.0, 1000.0], dtype=np.float32)
+    stop_mask = np.asarray([False, True, True, True])
+    critical_slip = np.full(4, 0.006, dtype=np.float32)
+
+    reached = _shear_loading_stop_reached(
+        cumulative_slip,
+        slip_rate,
+        stop_mask,
+        critical_slip,
+        np.asarray(0.006, dtype=np.float32),
+        True,
+        np.asarray(500.0, dtype=np.float32),
+        1.0,
+    )
+    assert not bool(np.asarray(reached))
+
+    cumulative_slip[2] = 0.008
+    reached = _shear_loading_stop_reached(
+        cumulative_slip,
+        slip_rate,
+        stop_mask,
+        critical_slip,
+        np.asarray(0.006, dtype=np.float32),
+        True,
+        np.asarray(500.0, dtype=np.float32),
+        1.0,
+    )
+    assert bool(np.asarray(reached))
 
 
 def test_contact_safety_factor_scales_contact_limit_without_changing_bulk_limit():
