@@ -13,7 +13,6 @@ import matplotlib.pyplot as plt
 
 from plot_rupture_speed_and_fault_profile import (
     decode_strings,
-    first_crossing_and_peak_rate,
     linear_arrival_fit,
     material_wave_speeds,
 )
@@ -94,8 +93,76 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fit-start", type=float, default=120.0)
     parser.add_argument("--fit-end", type=float, default=440.0)
     parser.add_argument("--chunk-frames", type=int, default=2048)
+    parser.add_argument(
+        "--velocity-thresholds",
+        type=float,
+        nargs=2,
+        default=(500.0, 1000.0),
+        metavar=("LOW", "HIGH"),
+        help="Dynamic slip-rate thresholds used for rupture arrival [mm/s].",
+    )
     parser.add_argument("--dpi", type=int, default=260)
     return parser.parse_args()
+
+
+def first_velocity_crossing(
+    dataset: h5py.Dataset,
+    frame_indices: np.ndarray,
+    shear_time_ms: np.ndarray,
+    threshold_mm_s: float,
+    *,
+    chunk_frames: int,
+) -> np.ndarray:
+    if threshold_mm_s <= 0.0:
+        raise ValueError("The slip-rate threshold must be positive.")
+    if chunk_frames < 2:
+        raise ValueError("chunk_frames must be at least 2.")
+    if len(frame_indices) < 2 or not np.all(np.diff(frame_indices) == 1):
+        raise ValueError("At least two contiguous shear frames are required.")
+
+    arrivals = np.full(dataset.shape[1], np.nan, dtype=np.float64)
+    unresolved = np.ones(dataset.shape[1], dtype=bool)
+    first_frame = int(frame_indices[0])
+    last_frame = int(frame_indices[-1])
+    previous_values: np.ndarray | None = None
+    previous_time: float | None = None
+
+    for start in range(first_frame, last_frame + 1, chunk_frames):
+        end = min(start + chunk_frames, last_frame + 1)
+        values = np.abs(np.asarray(dataset[start:end], dtype=np.float64))
+        times = shear_time_ms[start:end]
+        if previous_values is not None and previous_time is not None:
+            values = np.vstack([previous_values, values])
+            times = np.concatenate([[previous_time], times])
+
+        before = values[:-1]
+        after = values[1:]
+        crossing = (
+            (before < threshold_mm_s)
+            & (after >= threshold_mm_s)
+            & unresolved[None, :]
+        )
+        crossed = np.any(crossing, axis=0)
+        if np.any(crossed):
+            stations = np.flatnonzero(crossed)
+            intervals = np.argmax(crossing[:, crossed], axis=0)
+            lower = before[intervals, stations]
+            upper = after[intervals, stations]
+            fraction = np.clip(
+                (threshold_mm_s - lower) / np.maximum(upper - lower, 1.0e-30),
+                0.0,
+                1.0,
+            )
+            arrivals[stations] = times[intervals] + fraction * (
+                times[intervals + 1] - times[intervals]
+            )
+            unresolved[stations] = False
+
+        previous_values = values[-1].copy()
+        previous_time = float(times[-1])
+        if not np.any(unresolved):
+            break
+    return arrivals
 
 
 def _zone_metadata(h5: h5py.File, contact_y: np.ndarray) -> dict[str, float]:
@@ -162,10 +229,11 @@ def _panel_label(axis: plt.Axes, label: str) -> None:
 def _plot_speed(
     *,
     contact_y: np.ndarray,
-    half_arrival: np.ndarray,
-    dc_arrival: np.ndarray,
-    half_fit: dict[str, object],
-    dc_fit: dict[str, object],
+    low_arrival: np.ndarray,
+    high_arrival: np.ndarray,
+    low_fit: dict[str, object],
+    high_fit: dict[str, object],
+    velocity_thresholds: tuple[float, float],
     fit_start: float,
     fit_end: float,
     stop_time_ms: float,
@@ -182,12 +250,25 @@ def _plot_speed(
         constrained_layout=True,
     )
     _shade_zones(axis, zones)
-    axis.plot(contact_y, half_arrival, color=TEAL, lw=1.35, label=r"$0.5D_c$ crossing")
-    axis.plot(contact_y, dc_arrival, color=NAVY, lw=1.05, label=r"$D_c$ crossing")
+    low_threshold, high_threshold = velocity_thresholds
+    axis.plot(
+        contact_y,
+        low_arrival,
+        color=TEAL,
+        lw=1.35,
+        label=rf"$|V|={low_threshold:g}$ mm s$^{{-1}}$",
+    )
+    axis.plot(
+        contact_y,
+        high_arrival,
+        color=NAVY,
+        lw=1.05,
+        label=rf"$|V|={high_threshold:g}$ mm s$^{{-1}}$",
+    )
     fit_y = np.linspace(fit_start, fit_end, 300)
     axis.plot(
         fit_y,
-        float(half_fit["slope_ms_per_mm"]) * fit_y + float(half_fit["intercept_ms"]),
+        float(low_fit["slope_ms_per_mm"]) * fit_y + float(low_fit["intercept_ms"]),
         color=ORANGE,
         lw=1.45,
         ls=(0, (5, 3)),
@@ -202,7 +283,7 @@ def _plot_speed(
             label="Loading stopped",
         )
     finite = np.concatenate(
-        [half_arrival[np.isfinite(half_arrival)], dc_arrival[np.isfinite(dc_arrival)]]
+        [low_arrival[np.isfinite(low_arrival)], high_arrival[np.isfinite(high_arrival)]]
     )
     pad = max(0.05, 0.06 * float(np.ptp(finite)))
     axis.set_ylim(float(np.min(finite)) - pad, float(np.max(finite)) + pad)
@@ -215,9 +296,9 @@ def _plot_speed(
     axis.spines[["top", "right"]].set_visible(False)
     _panel_label(axis, "(a)")
 
-    half_speed = float(half_fit["speed_m_per_s"])
-    dc_speed = float(dc_fit["speed_m_per_s"])
-    measured = 0.5 * (half_speed + dc_speed)
+    low_speed = float(low_fit["speed_m_per_s"])
+    high_speed = float(high_fit["speed_m_per_s"])
+    measured = 0.5 * (low_speed + high_speed)
     labels = [r"$v_r$", r"$c_R$", r"$c_s$", r"$c_p$"]
     values = [
         measured / 1e3,
@@ -245,8 +326,8 @@ def _plot_speed(
     speed_axis.set_title(
         "Measured and material speeds\n"
         rf"$v_r={measured / 1e3:.3f}$ km s$^{{-1}}$; "
-        rf"$R^2_{{0.5D_c}}={float(half_fit['r_squared']):.4f}$, "
-        rf"$R^2_{{D_c}}={float(dc_fit['r_squared']):.4f}$",
+        rf"$R^2_{{V_l}}={float(low_fit['r_squared']):.4f}$, "
+        rf"$R^2_{{V_h}}={float(high_fit['r_squared']):.4f}$",
         loc="left",
         fontsize=8.2,
     )
@@ -413,6 +494,9 @@ def _plot_mechanism(
 
 def main() -> int:
     args = parse_args()
+    velocity_thresholds = tuple(sorted(float(value) for value in args.velocity_thresholds))
+    if velocity_thresholds[0] <= 0.0:
+        raise ValueError("Velocity thresholds must be positive.")
     data_path = args.data_path.expanduser().resolve()
     output_dir = (
         args.output_dir.expanduser().resolve()
@@ -444,18 +528,18 @@ def main() -> int:
         pressure_time = float(h5.attrs["pressure_steps"] * h5.attrs["dt"])
         shear_time_ms = (history[:, columns.index("time")] - pressure_time) * 1e3
         shear_indices = np.flatnonzero(phase_id == 2)
-        half_arrival, _ = first_crossing_and_peak_rate(
-            interface["cumulative_slip"],
+        low_arrival = first_velocity_crossing(
+            interface["slip_rate"],
             shear_indices,
             shear_time_ms,
-            0.5 * characteristic_slip,
+            velocity_thresholds[0],
             chunk_frames=args.chunk_frames,
         )
-        dc_arrival, _ = first_crossing_and_peak_rate(
-            interface["cumulative_slip"],
+        high_arrival = first_velocity_crossing(
+            interface["slip_rate"],
             shear_indices,
             shear_time_ms,
-            characteristic_slip,
+            velocity_thresholds[1],
             chunk_frames=args.chunk_frames,
         )
         stopped = history[:, columns.index("shear_loading_stopped")] > 0.5
@@ -466,15 +550,16 @@ def main() -> int:
         density = float(h5.attrs.get("density", h5.attrs.get("rho", 1.148e-9)))
         zones = _zone_metadata(h5, contact_y)
 
-    half_fit = linear_arrival_fit(contact_y, half_arrival, args.fit_start, args.fit_end)
-    dc_fit = linear_arrival_fit(contact_y, dc_arrival, args.fit_start, args.fit_end)
+    low_fit = linear_arrival_fit(contact_y, low_arrival, args.fit_start, args.fit_end)
+    high_fit = linear_arrival_fit(contact_y, high_arrival, args.fit_start, args.fit_end)
     wave_speeds = material_wave_speeds(young, poisson, density)
     speed_paths = _plot_speed(
         contact_y=contact_y,
-        half_arrival=half_arrival,
-        dc_arrival=dc_arrival,
-        half_fit=half_fit,
-        dc_fit=dc_fit,
+        low_arrival=low_arrival,
+        high_arrival=high_arrival,
+        low_fit=low_fit,
+        high_fit=high_fit,
+        velocity_thresholds=velocity_thresholds,
         fit_start=args.fit_start,
         fit_end=args.fit_end,
         stop_time_ms=stop_time_ms,
@@ -503,13 +588,14 @@ def main() -> int:
     payload = {
         "friction_law": friction_law,
         "fit_interval_mm": [args.fit_start, args.fit_end],
-        "half_dc_speed_m_per_s": half_fit["speed_m_per_s"],
-        "dc_speed_m_per_s": dc_fit["speed_m_per_s"],
+        "velocity_thresholds_mm_s": velocity_thresholds,
+        "low_threshold_speed_m_per_s": low_fit["speed_m_per_s"],
+        "high_threshold_speed_m_per_s": high_fit["speed_m_per_s"],
         "stable_speed_m_per_s": 0.5
-        * (float(half_fit["speed_m_per_s"]) + float(dc_fit["speed_m_per_s"])),
+        * (float(low_fit["speed_m_per_s"]) + float(high_fit["speed_m_per_s"])),
         "arrival_fits": {
-            "half_dc": {
-                key: half_fit[key]
+            "low_velocity_threshold": {
+                key: low_fit[key]
                 for key in (
                     "slope_ms_per_mm",
                     "intercept_ms",
@@ -517,8 +603,8 @@ def main() -> int:
                     "r_squared",
                 )
             },
-            "dc": {
-                key: dc_fit[key]
+            "high_velocity_threshold": {
+                key: high_fit[key]
                 for key in (
                     "slope_ms_per_mm",
                     "intercept_ms",
@@ -528,9 +614,9 @@ def main() -> int:
             },
         },
         "arrival_definition": (
-            "Mean of linear fits to the first 0.5D_c and first D_c crossings. "
-            "The global peak slip-rate time is excluded because later wave arrivals "
-            "can make it noncausal along the fault."
+            "Mean of linear fits to the first crossings of two dynamic slip-rate "
+            "thresholds. The thresholds exceed the imposed loading velocity, so "
+            "quasistatic creep and later global peak-rate arrivals are excluded."
         ),
         "loading_stop_time_ms": stop_time_ms,
         "wave_speeds_m_per_s": wave_speeds,

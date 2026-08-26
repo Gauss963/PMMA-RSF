@@ -11,6 +11,33 @@ sys.path.insert(0, str(PLOT_DIR))
 
 from plot_contact_friction_map import plot_mu_eff_maps  # noqa: E402
 from plot_contact_mu_disp import plot_contact_mu_disp  # noqa: E402
+from plot_rsf_rupture_analysis import first_velocity_crossing  # noqa: E402
+
+
+def test_first_velocity_crossing_interpolates_across_chunks(tmp_path):
+    input_path = tmp_path / "velocity.h5"
+    with h5py.File(input_path, "w") as h5:
+        rates = h5.create_dataset(
+            "rates",
+            data=np.asarray(
+                [
+                    [0.0, 0.0],
+                    [400.0, 0.0],
+                    [600.0, -200.0],
+                    [800.0, -400.0],
+                    [1200.0, -600.0],
+                ]
+            ),
+        )
+        arrivals = first_velocity_crossing(
+            rates,
+            np.arange(5, dtype=np.int64),
+            np.arange(5, dtype=np.float64),
+            500.0,
+            chunk_frames=2,
+        )
+
+    assert arrivals == pytest.approx([1.5, 3.5])
 
 
 def test_contact_plots_use_saved_rsf_coefficient(tmp_path):
