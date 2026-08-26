@@ -363,7 +363,7 @@ def _plot_mechanism(
             title,
             transform=equation_axis.transAxes,
             fontsize=8.2,
-            fontweight="semibold",
+            fontweight="bold",
             color=INK,
         )
         for line_index, equation in enumerate(equation_lines):
@@ -507,6 +507,26 @@ def main() -> int:
         "dc_speed_m_per_s": dc_fit["speed_m_per_s"],
         "stable_speed_m_per_s": 0.5
         * (float(half_fit["speed_m_per_s"]) + float(dc_fit["speed_m_per_s"])),
+        "arrival_fits": {
+            "half_dc": {
+                key: half_fit[key]
+                for key in (
+                    "slope_ms_per_mm",
+                    "intercept_ms",
+                    "speed_m_per_s",
+                    "r_squared",
+                )
+            },
+            "dc": {
+                key: dc_fit[key]
+                for key in (
+                    "slope_ms_per_mm",
+                    "intercept_ms",
+                    "speed_m_per_s",
+                    "r_squared",
+                )
+            },
+        },
         "arrival_definition": (
             "Mean of linear fits to the first 0.5D_c and first D_c crossings. "
             "The global peak slip-rate time is excluded because later wave arrivals "
