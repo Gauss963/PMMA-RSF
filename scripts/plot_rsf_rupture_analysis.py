@@ -12,27 +12,77 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from plot_rupture_speed_and_fault_profile import (
-    BACKGROUND,
-    GOLD,
-    GRID,
-    INK,
-    MUTED,
-    NAVY,
-    ORANGE,
-    PALE_BLUE,
-    PALE_GOLD,
-    PALE_RED,
-    PANEL,
-    RED,
-    TEAL,
-    configure_style,
     decode_strings,
     first_crossing_and_peak_rate,
     linear_arrival_fit,
     material_wave_speeds,
-    save_figure,
 )
 from tatva.pmma.profiles import regularized_steady_friction
+
+
+INK = "#202124"
+MUTED = "#5F6368"
+GRID = "#D7DADD"
+NAVY = "#24557A"
+TEAL = "#00838F"
+ORANGE = "#D55E00"
+GOLD = "#B8860B"
+RED = "#A33A2B"
+PALE_GOLD = "#E8C66A"
+PALE_BLUE = "#70A9B0"
+PALE_RED = "#D58A7B"
+
+
+def configure_journal_style() -> None:
+    plt.rcParams.update(
+        {
+            "font.family": "sans-serif",
+            "font.sans-serif": ["Arial", "Helvetica", "DejaVu Sans"],
+            "font.size": 8.5,
+            "axes.titlesize": 9.0,
+            "axes.labelsize": 9.0,
+            "axes.titleweight": "normal",
+            "axes.labelcolor": INK,
+            "axes.edgecolor": INK,
+            "axes.linewidth": 0.75,
+            "xtick.labelsize": 8.0,
+            "ytick.labelsize": 8.0,
+            "xtick.color": INK,
+            "ytick.color": INK,
+            "xtick.direction": "out",
+            "ytick.direction": "out",
+            "xtick.major.size": 3.0,
+            "ytick.major.size": 3.0,
+            "xtick.major.width": 0.65,
+            "ytick.major.width": 0.65,
+            "grid.color": GRID,
+            "grid.linewidth": 0.55,
+            "grid.alpha": 0.7,
+            "legend.fontsize": 7.5,
+            "legend.frameon": False,
+            "figure.facecolor": "white",
+            "axes.facecolor": "white",
+            "savefig.facecolor": "white",
+            "pdf.fonttype": 42,
+            "ps.fonttype": 42,
+        }
+    )
+
+
+def save_journal_figure(
+    figure: plt.Figure,
+    output_dir: Path,
+    stem: str,
+    dpi: int,
+) -> tuple[Path, Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    png_path = output_dir / f"{stem}.png"
+    pdf_path = output_dir / f"{stem}.pdf"
+    save_options = {"bbox_inches": "tight", "pad_inches": 0.04, "facecolor": "white"}
+    figure.savefig(png_path, dpi=dpi, **save_options)
+    figure.savefig(pdf_path, **save_options)
+    plt.close(figure)
+    return png_path, pdf_path
 
 
 def parse_args() -> argparse.Namespace:
@@ -67,37 +117,50 @@ def _zone_metadata(h5: h5py.File, contact_y: np.ndarray) -> dict[str, float]:
 
 def _shade_zones(axis: plt.Axes, zones: dict[str, float]) -> None:
     axis.axvspan(
-        zones["y_min"], zones["loading_end"], color=PALE_GOLD, alpha=0.62, lw=0
+        zones["y_min"], zones["loading_end"], color=PALE_GOLD, alpha=0.16, lw=0
     )
     axis.axvspan(
         zones["loading_end"],
         zones["loading_transition_end"],
         color=PALE_GOLD,
-        alpha=0.28,
+        alpha=0.08,
         lw=0,
     )
     axis.axvspan(
         zones["loading_transition_end"],
         zones["leading_transition_start"],
         color=PALE_BLUE,
-        alpha=0.34,
+        alpha=0.08,
         lw=0,
     )
     axis.axvspan(
         zones["leading_transition_start"],
         zones["leading_start"],
         color=PALE_RED,
-        alpha=0.28,
+        alpha=0.08,
         lw=0,
     )
     axis.axvspan(
-        zones["leading_start"], zones["y_max"], color=PALE_RED, alpha=0.58, lw=0
+        zones["leading_start"], zones["y_max"], color=PALE_RED, alpha=0.15, lw=0
+    )
+
+
+def _panel_label(axis: plt.Axes, label: str) -> None:
+    axis.text(
+        -0.12,
+        1.04,
+        label,
+        transform=axis.transAxes,
+        fontsize=9.5,
+        fontweight="bold",
+        color=INK,
+        va="bottom",
+        ha="left",
     )
 
 
 def _plot_speed(
     *,
-    run_id: str,
     contact_y: np.ndarray,
     half_arrival: np.ndarray,
     peak_arrival: np.ndarray,
@@ -114,42 +177,30 @@ def _plot_speed(
     figure, (axis, speed_axis) = plt.subplots(
         1,
         2,
-        figsize=(16.0, 8.5),
-        gridspec_kw={"width_ratios": (3.3, 1.1)},
+        figsize=(7.2, 3.15),
+        gridspec_kw={"width_ratios": (2.25, 1.0)},
+        constrained_layout=True,
     )
-    figure.subplots_adjust(left=0.07, right=0.965, top=0.84, bottom=0.14, wspace=0.22)
-    figure.suptitle(
-        f"Run {run_id}  |  RSF rupture arrival and stable-front speed",
-        x=0.07,
-        ha="left",
-        fontsize=24,
-        fontweight="bold",
-        color=INK,
-    )
-    figure.text(
-        0.07,
-        0.875,
-        "Measured arrival-time slopes only; the LSW cohesive-zone prediction "
-        "is not applied to RSF.",
-        color=MUTED,
-        fontsize=13.5,
-    )
-
-    axis.set_facecolor(PANEL)
     _shade_zones(axis, zones)
-    axis.plot(contact_y, half_arrival, color=TEAL, lw=2.3, label=r"$0.5D_c$ crossing")
-    axis.plot(contact_y, peak_arrival, color=NAVY, lw=1.8, label="Peak slip-rate time")
+    axis.plot(contact_y, half_arrival, color=TEAL, lw=1.35, label=r"$0.5D_c$ crossing")
+    axis.plot(contact_y, peak_arrival, color=NAVY, lw=1.05, label="Peak slip rate")
     fit_y = np.linspace(fit_start, fit_end, 300)
     axis.plot(
         fit_y,
         float(half_fit["slope_ms_per_mm"]) * fit_y + float(half_fit["intercept_ms"]),
         color=ORANGE,
-        lw=3.0,
-        ls=(0, (7, 4)),
+        lw=1.45,
+        ls=(0, (5, 3)),
         label=f"Linear fit, {fit_start:.0f}-{fit_end:.0f} mm",
     )
     if np.isfinite(stop_time_ms):
-        axis.axhline(stop_time_ms, color=RED, lw=1.5, ls=(0, (3, 3)), label="Loading stopped")
+        axis.axhline(
+            stop_time_ms,
+            color=RED,
+            lw=0.9,
+            ls=(0, (3, 2)),
+            label="Loading stopped",
+        )
     finite = np.concatenate(
         [half_arrival[np.isfinite(half_arrival)], peak_arrival[np.isfinite(peak_arrival)]]
     )
@@ -158,9 +209,11 @@ def _plot_speed(
     axis.set_xlim(zones["y_min"], zones["y_max"])
     axis.set_xlabel("Position along fault, y [mm]")
     axis.set_ylabel("Arrival time after shear phase begins [ms]")
-    axis.grid(axis="y", color=GRID)
-    axis.legend(loc="best", fontsize=11.5)
+    axis.set_title("Rupture-front arrival", loc="left")
+    axis.grid(axis="y")
+    axis.legend(loc="best", handlelength=2.5)
     axis.spines[["top", "right"]].set_visible(False)
+    _panel_label(axis, "(a)")
 
     half_speed = float(half_fit["speed_m_per_s"])
     peak_speed = float(peak_fit["speed_m_per_s"])
@@ -174,29 +227,37 @@ def _plot_speed(
     ]
     colors = [ORANGE, GOLD, TEAL, NAVY]
     positions = np.arange(len(values))
-    speed_axis.set_facecolor(PANEL)
-    speed_axis.hlines(positions, 0.0, values, color=colors, alpha=0.45, lw=5)
-    speed_axis.scatter(values, positions, color=colors, s=110, zorder=3)
+    speed_axis.hlines(positions, 0.0, values, color=colors, alpha=0.55, lw=2.1)
+    speed_axis.scatter(values, positions, color=colors, s=25, zorder=3)
     for position, value in zip(positions, values, strict=True):
-        speed_axis.text(value + 0.05, position, f"{value:.2f}", va="center", color=INK)
+        speed_axis.text(
+            value + 0.045,
+            position,
+            f"{value:.2f}",
+            va="center",
+            color=INK,
+            fontsize=7.5,
+        )
     speed_axis.set_yticks(positions, labels)
     speed_axis.invert_yaxis()
     speed_axis.set_xlim(0.0, 1.12 * max(values))
     speed_axis.set_xlabel("Speed [km/s]")
     speed_axis.set_title(
-        f"Stable front: {measured / 1e3:.3f} km/s\n"
+        "Measured and material speeds\n"
+        rf"$v_r={measured / 1e3:.3f}$ km s$^{{-1}}$; "
         rf"$R^2_{{0.5D_c}}={float(half_fit['r_squared']):.4f}$, "
         rf"$R^2_{{peak}}={float(peak_fit['r_squared']):.4f}$",
         loc="left",
+        fontsize=8.2,
     )
-    speed_axis.grid(axis="x", color=GRID)
+    speed_axis.grid(axis="x")
     speed_axis.spines[["top", "right", "left"]].set_visible(False)
-    return save_figure(figure, output_dir, "rupture_speed_stable_fit", dpi)
+    _panel_label(speed_axis, "(b)")
+    return save_journal_figure(figure, output_dir, "rupture_speed_stable_fit", dpi)
 
 
 def _plot_profile(
     *,
-    run_id: str,
     contact_y: np.ndarray,
     direct_effect: np.ndarray,
     state_effect: np.ndarray,
@@ -205,53 +266,34 @@ def _plot_profile(
     output_dir: Path,
     dpi: int,
 ) -> tuple[Path, Path]:
-    loading_delta = float(direct_effect[0] - state_effect[0])
-    if np.isclose(loading_delta, 0.0, atol=1.0e-12):
-        loading_behavior = "velocity-neutral"
-    elif loading_delta < 0.0:
-        loading_behavior = "velocity-weakening"
-    else:
-        loading_behavior = "velocity-strengthening"
-    figure, axes = plt.subplots(3, 1, figsize=(15.0, 9.0), sharex=True)
-    figure.subplots_adjust(left=0.09, right=0.95, top=0.84, bottom=0.11, hspace=0.34)
-    figure.suptitle(
-        f"Run {run_id}  |  Rate-and-state fault profile",
-        x=0.09,
-        ha="left",
-        fontsize=24,
-        fontweight="bold",
-        color=INK,
-    )
-    figure.text(
-        0.09,
-        0.875,
-        f"Loading-end {loading_behavior}, a velocity-weakening middle, and a "
-        "velocity-strengthening leading edge; transitions are half-cosine.",
-        fontsize=13.3,
-        color=MUTED,
+    figure, axes = plt.subplots(
+        3,
+        1,
+        figsize=(7.2, 5.4),
+        sharex=True,
+        constrained_layout=True,
     )
     for axis in axes:
-        axis.set_facecolor(PANEL)
         _shade_zones(axis, zones)
-        axis.grid(axis="y", color=GRID)
+        axis.grid(axis="y")
         axis.spines[["top", "right"]].set_visible(False)
 
-    axes[0].plot(contact_y, direct_effect, color=TEAL, lw=2.8, label=r"Direct effect, $a$")
-    axes[0].plot(contact_y, state_effect, color=NAVY, lw=2.8, label=r"State effect, $b$")
+    axes[0].plot(contact_y, direct_effect, color=TEAL, lw=1.35, label=r"Direct effect, $a$")
+    axes[0].plot(contact_y, state_effect, color=NAVY, lw=1.35, label=r"State effect, $b$")
     axes[0].set_ylabel("RSF parameter")
     axes[0].set_title("Constitutive coefficients", loc="left")
-    axes[0].legend(ncol=2)
+    axes[0].legend(ncol=2, loc="upper center")
 
     weakening = direct_effect - state_effect
-    axes[1].axhline(0.0, color=INK, lw=1.0)
-    axes[1].plot(contact_y, weakening, color=ORANGE, lw=3.0)
+    axes[1].axhline(0.0, color=INK, lw=0.75)
+    axes[1].plot(contact_y, weakening, color=ORANGE, lw=1.45)
     axes[1].fill_between(
         contact_y,
         0.0,
         weakening,
         where=weakening < 0.0,
         color=ORANGE,
-        alpha=0.18,
+        alpha=0.14,
         label=r"$a-b<0$: velocity weakening",
     )
     axes[1].fill_between(
@@ -260,24 +302,25 @@ def _plot_profile(
         weakening,
         where=weakening > 0.0,
         color=TEAL,
-        alpha=0.18,
+        alpha=0.14,
         label=r"$a-b>0$: velocity strengthening",
     )
     axes[1].set_ylabel(r"$a-b$")
-    axes[1].set_title("Rupture tendency", loc="left")
-    axes[1].legend(ncol=2, fontsize=11.5)
+    axes[1].set_title("Steady-state velocity dependence", loc="left")
+    axes[1].legend(ncol=2, loc="lower center")
 
-    axes[2].plot(contact_y, characteristic_slip, color=RED, lw=3.0)
-    axes[2].set_ylabel(r"$D_c$ [mm]")
+    axes[2].plot(contact_y, 1.0e3 * characteristic_slip, color=RED, lw=1.45)
+    axes[2].set_ylabel(r"$D_c$ [$\mu$m]")
     axes[2].set_xlabel("Position along fault, y [mm]")
-    axes[2].set_title("Ageing-law characteristic slip distance", loc="left")
+    axes[2].set_title("Characteristic slip distance", loc="left")
     axes[2].set_xlim(zones["y_min"], zones["y_max"])
-    return save_figure(figure, output_dir, "fault_interface_profile", dpi)
+    for axis, label in zip(axes, ("(a)", "(b)", "(c)"), strict=True):
+        _panel_label(axis, label)
+    return save_journal_figure(figure, output_dir, "fault_interface_profile", dpi)
 
 
 def _plot_mechanism(
     *,
-    run_id: str,
     direct_effect: np.ndarray,
     state_effect: np.ndarray,
     reference_friction: np.ndarray,
@@ -286,61 +329,54 @@ def _plot_mechanism(
     dpi: int,
 ) -> tuple[Path, Path]:
     figure, (equation_axis, curve_axis) = plt.subplots(
-        1, 2, figsize=(16.0, 8.5), gridspec_kw={"width_ratios": (1.05, 1.35)}
-    )
-    figure.subplots_adjust(left=0.06, right=0.96, top=0.82, bottom=0.13, wspace=0.18)
-    figure.suptitle(
-        f"Run {run_id}  |  Regularized rate-and-state friction",
-        x=0.06,
-        ha="left",
-        fontsize=24,
-        fontweight="bold",
-        color=INK,
-    )
-    figure.text(
-        0.06,
-        0.86,
-        "No ad-hoc tail creep is active; the leading edge is stabilized by a-b > 0.",
-        fontsize=14,
-        color=MUTED,
+        1,
+        2,
+        figsize=(7.2, 3.25),
+        gridspec_kw={"width_ratios": (1.0, 1.2)},
+        constrained_layout=True,
     )
     equation_axis.axis("off")
-    equation_axis.set_facecolor(PANEL)
+    equation_axis.set_title("RSF formulation (ageing law)", loc="left", pad=8.0)
     equations = [
-        (0.90, "Ageing state evolution", r"$\dot{\theta}=1-|V|\theta/D_c$"),
+        (0.86, "State evolution", (r"$\dot{\theta}=1-|V|\theta/D_c$",)),
         (
-            0.61,
+            0.57,
             "Regularized shear strength",
-            r"$\tau=a\sigma_n\,\mathrm{asinh}\!\left[\frac{|V|}{2V_0}"
-            r"\exp\!\left(\frac{f_0+b\ln(V_0\theta/D_c)}{a}\right)\right]$",
+            (
+                r"$\tau=a\sigma_n\,\mathrm{asinh}(\Xi)$",
+                r"$\Xi=\dfrac{|V|}{2V_0}\exp\!\left[\dfrac{f_0+b\ln(V_0\theta/D_c)}{a}\right]$",
+            ),
         ),
         (
-            0.29,
+            0.20,
             "Steady state",
-            r"$\theta_{ss}=D_c/|V|,\qquad "
-            r"\partial f_{ss}/\partial\ln V\approx a-b$",
+            (
+                r"$\theta_{ss}=D_c/|V|$",
+                r"$\partial f_{ss}/\partial\ln V\approx a-b$",
+            ),
         ),
     ]
-    for y, title, equation in equations:
+    for y, title, equation_lines in equations:
         equation_axis.text(
-            0.02,
+            0.0,
             y,
             title,
             transform=equation_axis.transAxes,
-            fontsize=15,
-            fontweight="bold",
+            fontsize=8.2,
+            fontweight="semibold",
             color=INK,
         )
-        equation_axis.text(
-            0.02,
-            y - 0.13,
-            equation,
-            transform=equation_axis.transAxes,
-            fontsize=14,
-            color=NAVY,
-        )
+        for line_index, equation in enumerate(equation_lines):
+            equation_axis.text(
+                0.0,
+                y - 0.12 - 0.095 * line_index,
+                equation,
+                transform=equation_axis.transAxes,
+                fontsize=8.0 if len(equation_lines) == 1 else 7.4,
+                color=NAVY,
+            )
+    _panel_label(equation_axis, "(a)")
 
-    curve_axis.set_facecolor(PANEL)
     velocity = np.logspace(-5, 4, 500)
     indices = [0, len(direct_effect) // 2, len(direct_effect) - 1]
     labels = ["Loading end", "Middle", "Leading edge"]
@@ -362,16 +398,17 @@ def _plot_mechanism(
             velocity,
             friction,
             color=color,
-            lw=2.8,
+            lw=1.45,
             label=rf"{label}: $a-b={direct_effect[index] - state_effect[index]:+.4f}$",
         )
-    curve_axis.set_xlabel("Steady slip rate, |V| [mm/s]")
+    curve_axis.set_xlabel(r"Steady slip rate, $|V|$ [mm s$^{-1}$]")
     curve_axis.set_ylabel(r"Steady friction coefficient, $f_{ss}$")
-    curve_axis.set_title("Velocity dependence prescribed along the fault", loc="left")
-    curve_axis.grid(color=GRID)
-    curve_axis.legend(fontsize=11.5)
+    curve_axis.set_title("Steady-state friction", loc="left")
+    curve_axis.grid()
+    curve_axis.legend(loc="best")
     curve_axis.spines[["top", "right"]].set_visible(False)
-    return save_figure(figure, output_dir, "rsf_mechanism", dpi)
+    _panel_label(curve_axis, "(b)")
+    return save_journal_figure(figure, output_dir, "rsf_mechanism", dpi)
 
 
 def main() -> int:
@@ -382,8 +419,7 @@ def main() -> int:
         if args.output_dir is not None
         else data_path.parent.parent / "Plot"
     )
-    run_id = data_path.parent.parent.name.split("_", maxsplit=1)[0]
-    configure_style()
+    configure_journal_style()
 
     with h5py.File(data_path, "r") as h5:
         friction_law = str(h5.attrs.get("friction_law", ""))
@@ -427,7 +463,6 @@ def main() -> int:
     peak_fit = linear_arrival_fit(contact_y, peak_arrival, args.fit_start, args.fit_end)
     wave_speeds = material_wave_speeds(young, poisson, density)
     speed_paths = _plot_speed(
-        run_id=run_id,
         contact_y=contact_y,
         half_arrival=half_arrival,
         peak_arrival=peak_arrival,
@@ -442,7 +477,6 @@ def main() -> int:
         dpi=args.dpi,
     )
     profile_paths = _plot_profile(
-        run_id=run_id,
         contact_y=contact_y,
         direct_effect=direct_effect,
         state_effect=state_effect,
@@ -452,7 +486,6 @@ def main() -> int:
         dpi=args.dpi,
     )
     mechanism_paths = _plot_mechanism(
-        run_id=run_id,
         direct_effect=direct_effect,
         state_effect=state_effect,
         reference_friction=reference_friction,
