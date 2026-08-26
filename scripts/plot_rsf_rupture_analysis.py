@@ -163,9 +163,9 @@ def _plot_speed(
     *,
     contact_y: np.ndarray,
     half_arrival: np.ndarray,
-    peak_arrival: np.ndarray,
+    dc_arrival: np.ndarray,
     half_fit: dict[str, object],
-    peak_fit: dict[str, object],
+    dc_fit: dict[str, object],
     fit_start: float,
     fit_end: float,
     stop_time_ms: float,
@@ -183,7 +183,7 @@ def _plot_speed(
     )
     _shade_zones(axis, zones)
     axis.plot(contact_y, half_arrival, color=TEAL, lw=1.35, label=r"$0.5D_c$ crossing")
-    axis.plot(contact_y, peak_arrival, color=NAVY, lw=1.05, label="Peak slip rate")
+    axis.plot(contact_y, dc_arrival, color=NAVY, lw=1.05, label=r"$D_c$ crossing")
     fit_y = np.linspace(fit_start, fit_end, 300)
     axis.plot(
         fit_y,
@@ -202,7 +202,7 @@ def _plot_speed(
             label="Loading stopped",
         )
     finite = np.concatenate(
-        [half_arrival[np.isfinite(half_arrival)], peak_arrival[np.isfinite(peak_arrival)]]
+        [half_arrival[np.isfinite(half_arrival)], dc_arrival[np.isfinite(dc_arrival)]]
     )
     pad = max(0.05, 0.06 * float(np.ptp(finite)))
     axis.set_ylim(float(np.min(finite)) - pad, float(np.max(finite)) + pad)
@@ -216,8 +216,8 @@ def _plot_speed(
     _panel_label(axis, "(a)")
 
     half_speed = float(half_fit["speed_m_per_s"])
-    peak_speed = float(peak_fit["speed_m_per_s"])
-    measured = 0.5 * (half_speed + peak_speed)
+    dc_speed = float(dc_fit["speed_m_per_s"])
+    measured = 0.5 * (half_speed + dc_speed)
     labels = [r"$v_r$", r"$c_R$", r"$c_s$", r"$c_p$"]
     values = [
         measured / 1e3,
@@ -246,7 +246,7 @@ def _plot_speed(
         "Measured and material speeds\n"
         rf"$v_r={measured / 1e3:.3f}$ km s$^{{-1}}$; "
         rf"$R^2_{{0.5D_c}}={float(half_fit['r_squared']):.4f}$, "
-        rf"$R^2_{{peak}}={float(peak_fit['r_squared']):.4f}$",
+        rf"$R^2_{{D_c}}={float(dc_fit['r_squared']):.4f}$",
         loc="left",
         fontsize=8.2,
     )
@@ -444,11 +444,18 @@ def main() -> int:
         pressure_time = float(h5.attrs["pressure_steps"] * h5.attrs["dt"])
         shear_time_ms = (history[:, columns.index("time")] - pressure_time) * 1e3
         shear_indices = np.flatnonzero(phase_id == 2)
-        half_arrival, peak_arrival = first_crossing_and_peak_rate(
+        half_arrival, _ = first_crossing_and_peak_rate(
             interface["cumulative_slip"],
             shear_indices,
             shear_time_ms,
             0.5 * characteristic_slip,
+            chunk_frames=args.chunk_frames,
+        )
+        dc_arrival, _ = first_crossing_and_peak_rate(
+            interface["cumulative_slip"],
+            shear_indices,
+            shear_time_ms,
+            characteristic_slip,
             chunk_frames=args.chunk_frames,
         )
         stopped = history[:, columns.index("shear_loading_stopped")] > 0.5
@@ -460,14 +467,14 @@ def main() -> int:
         zones = _zone_metadata(h5, contact_y)
 
     half_fit = linear_arrival_fit(contact_y, half_arrival, args.fit_start, args.fit_end)
-    peak_fit = linear_arrival_fit(contact_y, peak_arrival, args.fit_start, args.fit_end)
+    dc_fit = linear_arrival_fit(contact_y, dc_arrival, args.fit_start, args.fit_end)
     wave_speeds = material_wave_speeds(young, poisson, density)
     speed_paths = _plot_speed(
         contact_y=contact_y,
         half_arrival=half_arrival,
-        peak_arrival=peak_arrival,
+        dc_arrival=dc_arrival,
         half_fit=half_fit,
-        peak_fit=peak_fit,
+        dc_fit=dc_fit,
         fit_start=args.fit_start,
         fit_end=args.fit_end,
         stop_time_ms=stop_time_ms,
@@ -497,7 +504,14 @@ def main() -> int:
         "friction_law": friction_law,
         "fit_interval_mm": [args.fit_start, args.fit_end],
         "half_dc_speed_m_per_s": half_fit["speed_m_per_s"],
-        "peak_rate_speed_m_per_s": peak_fit["speed_m_per_s"],
+        "dc_speed_m_per_s": dc_fit["speed_m_per_s"],
+        "stable_speed_m_per_s": 0.5
+        * (float(half_fit["speed_m_per_s"]) + float(dc_fit["speed_m_per_s"])),
+        "arrival_definition": (
+            "Mean of linear fits to the first 0.5D_c and first D_c crossings. "
+            "The global peak slip-rate time is excluded because later wave arrivals "
+            "can make it noncausal along the fault."
+        ),
         "loading_stop_time_ms": stop_time_ms,
         "wave_speeds_m_per_s": wave_speeds,
         "lsw_czm_prediction": "not applicable to this RSF run",
