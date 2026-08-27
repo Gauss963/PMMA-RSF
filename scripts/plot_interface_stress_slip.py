@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 import h5py
@@ -150,6 +151,16 @@ def colored_curve(
     return collection
 
 
+def subplot_grid_shape(station_count: int) -> tuple[int, int]:
+    if station_count < 1:
+        raise ValueError("At least one station is required.")
+    if station_count <= 3:
+        return 1, station_count
+    columns = min(4, math.ceil(station_count / 2))
+    rows = math.ceil(station_count / columns)
+    return rows, columns
+
+
 def plot_stress_slip(
     data_path: Path,
     png_path: Path,
@@ -254,7 +265,15 @@ def plot_stress_slip(
             float(shear_time_ms[stop_indices[0]]) if len(stop_indices) else np.nan
         )
 
-    figure, axes = plt.subplots(2, 4, figsize=(21.0, 9.0), constrained_layout=True)
+    station_count = len(station_indices)
+    subplot_rows, subplot_columns = subplot_grid_shape(station_count)
+    figure, axes = plt.subplots(
+        subplot_rows,
+        subplot_columns,
+        figsize=(5.25 * subplot_columns, 4.5 * subplot_rows),
+        constrained_layout=True,
+        squeeze=False,
+    )
     axes_flat = axes.ravel()
     norm = Normalize(
         vmin=max(0.0, float(np.min(sampled_time_ms))),
@@ -263,7 +282,8 @@ def plot_stress_slip(
     last_collection: LineCollection | None = None
     station_summaries: list[dict[str, float]] = []
 
-    for station, axis in enumerate(axes_flat):
+    for station in range(station_count):
+        axis = axes_flat[station]
         last_collection = colored_curve(
             axis,
             sampled_slip[:, station],
@@ -299,9 +319,9 @@ def plot_stress_slip(
         axis.grid(alpha=0.22)
         axis.tick_params(labelsize=9)
         axis.margins(x=0.02, y=0.08)
-        if station % 4 == 0:
+        if station % subplot_columns == 0:
             axis.set_ylabel(r"Contact shear traction $\tau$ [MPa]")
-        if station >= 4:
+        if station // subplot_columns == subplot_rows - 1:
             axis.set_xlabel(r"Cumulative slip $\delta$ [mm]")
         if station == 0:
             axis.legend(loc="best", fontsize=8)
@@ -328,6 +348,9 @@ def plot_stress_slip(
                 "final_sigma_n_mpa": float(normal_traction[-1, station]),
             }
         )
+
+    for axis in axes_flat[station_count:]:
+        axis.set_visible(False)
 
     if last_collection is None:
         raise RuntimeError("No stress-slip curves were generated.")
