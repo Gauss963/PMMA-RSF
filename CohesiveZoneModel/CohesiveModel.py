@@ -93,65 +93,6 @@ def delta_sigma_xx(x, y, X_c, C_f, C_s, C_d, nu, Gamma, E):
 
     return delta_sigma
 
-def convert_modeII_to_akantu(tau_c, G_IIc, beta):
-    """
-    Convert Mode II cohesive properties (tau_c, G_IIc)
-    into Akantu parameters (sigma_c, fracture energy, beta).
-
-    Inputs:
-        tau_c : Mode II critical shear strength (MPa)
-        G_IIc : Mode II fracture energy (N/mm)
-        beta  : Akantu mode-mixity parameter (given by user)
-
-    Output:
-        sigma_c : Akantu's critical cohesive strength (MPa)
-        G_c     : fracture energy = G_IIc (N/mm)
-        gamma_c : computed shear displacement at failure (mm) for checking
-    """
-
-    # Akantu defines effective stress: sigma_eff = sqrt( σ_n^2 + τ^2/β^2 )
-    # For pure Mode II: τ_c = β * σ_c
-    sigma_c = tau_c / beta
-
-    # Akantu's fracture energy is the Mode II fracture energy
-    G_c = G_IIc
-
-    # For verification: G_IIc = 0.5 * τ_c * γ_c
-    gamma_c = 2 * G_IIc / tau_c
-
-    return sigma_c, G_c, beta, gamma_c
-
-
-def compute_Xc_modeII_SI(E, nu, tau_c, Gc):
-    """
-    Compute Mode II cohesive zone size in meters (ALL INPUTS IN SI UNITS)
-
-    Parameters
-    ----------
-    E : float
-        Young's modulus in Pa
-    nu : float
-        Poisson's ratio
-    tau_c : float
-        Cohesive shear strength in Pa
-    Gc : float
-        Fracture energy in J/m^2
-
-    Returns
-    -------
-    Xc : float
-        Cohesive zone size in meters
-    """
-
-    # Plane strain modulus
-    E_prime = E / (1 - nu**2)
-
-    # Mode II cohesive zone size formula:
-    # Xc = (9π/32) * (E' / tau_c^2) * Gc
-    coef = 9 * np.pi / 32
-    Xc = coef * (E_prime / tau_c**2) * Gc
-
-    return Xc
 
 def compute_E_nu_from_VpVsRho(Vp, Vs, rho):
     """

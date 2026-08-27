@@ -4,8 +4,13 @@ import glob
 import os
 
 def clear_terminal():
-    os.system('cls' if os.name == 'nt' else 'clear')
-
+    subprocess.run(
+        ['cls' if os.name == 'nt' else 'clear'],
+        check=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    
 cmd = ["squeue", "-u", "gauss112"]
 out_dir = "/home/gauss112/outs"
 
