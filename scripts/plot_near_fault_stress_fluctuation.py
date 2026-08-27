@@ -193,6 +193,32 @@ def saved_time_ms(h5: h5py.File) -> tuple[np.ndarray, np.ndarray]:
     return shear_time_ms, shear_indices
 
 
+def required_frame_time_bounds(
+    station_arrival_ms: np.ndarray,
+    *,
+    speed_m_per_s: float,
+    xi_min_mm: float,
+    xi_max_mm: float,
+    residual_end_ms: float,
+) -> tuple[float, float]:
+    if not np.isfinite(speed_m_per_s) or np.isclose(speed_m_per_s, 0.0):
+        raise ValueError("Rupture speed must be finite and nonzero.")
+    if residual_end_ms <= 0.0:
+        raise ValueError("Residual window end must be positive.")
+
+    # Numerically, m/s equals mm/ms. Include both the xi plotting extent and
+    # the symmetric pre-/post-tip windows used to define the stress baseline.
+    xi_time_bounds_ms = -np.asarray(
+        [xi_min_mm, xi_max_mm], dtype=np.float64
+    ) / speed_m_per_s
+    local_start_ms = min(float(np.min(xi_time_bounds_ms)), -residual_end_ms)
+    local_end_ms = max(float(np.max(xi_time_bounds_ms)), residual_end_ms)
+    return (
+        float(np.min(station_arrival_ms + local_start_ms)),
+        float(np.max(station_arrival_ms + local_end_ms)),
+    )
+
+
 def first_crossing_times(
     dataset: h5py.Dataset,
     frame_indices: np.ndarray,
@@ -1165,6 +1191,8 @@ def main() -> int:
 
     configure_style()
     run_id = data_path.parent.parent.name.split("_", maxsplit=1)[0]
+    residual_start_ms = args.residual_start_us * 1e-3
+    residual_end_ms = args.residual_end_us * 1e-3
 
     with h5py.File(data_path, "r") as h5:
         shear_time_ms, shear_indices = saved_time_ms(h5)
@@ -1241,11 +1269,12 @@ def main() -> int:
             args.probe_half_size,
         )
 
-        first_needed_time = float(
-            np.min(station_tip_arrival - args.xi_max / speed_m_per_s)
-        )
-        last_needed_time = float(
-            np.max(station_tip_arrival - args.xi_min / speed_m_per_s)
+        first_needed_time, last_needed_time = required_frame_time_bounds(
+            station_tip_arrival,
+            speed_m_per_s=speed_m_per_s,
+            xi_min_mm=args.xi_min,
+            xi_max_mm=args.xi_max,
+            residual_end_ms=residual_end_ms,
         )
         needed = shear_indices[
             (shear_time_ms[shear_indices] >= first_needed_time)
@@ -1337,9 +1366,6 @@ def main() -> int:
         dtype=np.float64,
     )
     pre_stress = np.empty_like(residual_stress)
-    residual_start_ms = args.residual_start_us * 1e-3
-    residual_end_ms = args.residual_end_us * 1e-3
-
     for station_index, arrival in enumerate(station_tip_arrival):
         local_time_ms = frame_time_ms - arrival
         local_xi = -speed_m_per_s * local_time_ms
