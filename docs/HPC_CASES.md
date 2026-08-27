@@ -23,14 +23,14 @@ Preflight a case without constructing a mesh or creating a run directory:
 
 ```bash
 python scripts/run_case.py \
-  cases/rsf_0121_q4_slow_strong_vs_12h.toml --preflight
+  cases/rsf_0122_q4_slow_rsf_buffer_12h.toml --preflight
 ```
 
 Run it locally:
 
 ```bash
 python scripts/run_case.py \
-  cases/rsf_0121_q4_slow_strong_vs_12h.toml
+  cases/rsf_0122_q4_slow_rsf_buffer_12h.toml
 ```
 
 Submit the default 0.50 mm Q4 explicit production case on one H200:
@@ -55,7 +55,7 @@ integrator state and the exact HDF5 frame indices. Resume a cleanly
 checkpointed run with:
 
 ```bash
-sbatch --export=ALL,CASE_FILE=/work/gauss112/tatva/cases/rsf_0121_q4_slow_strong_vs_12h.toml,RESUME_DIR=/work/gauss112/tatva/runs/TS0121 \
+sbatch --export=ALL,CASE_FILE=/work/gauss112/tatva/cases/rsf_0122_q4_slow_rsf_buffer_12h.toml,RESUME_DIR=/work/gauss112/tatva/runs/TS0122 \
   slurm/PMMA-RSF-GPU.slurm
 ```
 
@@ -128,3 +128,14 @@ near y=458 mm. TS0121 omits bulk strain from HDF5 because no production
 post-processor consumes it; displacement, velocity, stress, and all interface
 fields remain complete. This lowers the calibrated dump estimate to 1.187 TB
 without changing the solver or stress calculation.
+
+TS0122 replaces the hard TS0121 terminal barrier with a standard RSF buffer.
+The last 50 mm has `f0=0.70` and `a-b=+0.008`, joined to the middle fault by a
+50 mm half-cosine transition. Its lower low-speed strength permits stable
+prestress release, while velocity strengthening raises its steady friction to
+approximately 0.834 at 2000 mm/s. The 2.45 mm half-cosine ramp is lengthened
+to 57 ms; 70,759 bulk shear frames and 589,655 interface frames preserve the
+TS0120 physical sampling intervals. Bulk velocity is omitted together with
+bulk strain because production analysis uses the stored displacement, stress,
+scalar energy history, and high-rate interface slip rate. The calibrated dump
+estimate remains 1.183 TB.

@@ -123,14 +123,20 @@ def build_rate_state_profile(
     if loading_length + leading_length + 2.0 * transition_length >= length:
         raise ValueError("RSF end zones and transitions leave no middle segment.")
 
+    initial_friction = float(specification["initial_friction"])
     zones = {
-        name: specification[name] for name in ("loading", "middle", "leading")
+        name: dict(specification[name])
+        for name in ("loading", "middle", "leading")
     }
+    for zone in zones.values():
+        if "reference_friction" not in zone and "f0" not in zone:
+            zone["reference_friction"] = initial_friction
     fields: dict[str, np.ndarray] = {}
     aliases = {
         "direct_effect": "a",
         "state_effect": "b",
         "characteristic_slip": "dc",
+        "reference_friction": "f0",
     }
     loading_transition_start = y_min + loading_length
     loading_transition_end = loading_transition_start + transition_length
@@ -161,12 +167,10 @@ def build_rate_state_profile(
         values[y >= leading_transition_end] = leading_value
         fields[field_name] = values
 
-    initial_friction = float(specification["initial_friction"])
     initial_velocity = float(specification["initial_steady_velocity"])
     reference_velocity = float(specification["reference_velocity"])
     reference_state = float(specification["reference_state"])
     initial_state = fields["characteristic_slip"] / initial_velocity
-    fields["reference_friction"] = np.full(y.shape, initial_friction)
     fields["initial_state"] = initial_state
     fields["reference_velocity"] = np.full(y.shape, reference_velocity)
     fields["reference_state"] = np.full(y.shape, reference_state)

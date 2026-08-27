@@ -9,8 +9,6 @@ mu_k silently rescales the fracture energy.
 
 import numpy as np
 
-import FolderActions
-
 MPa = 1e6
 GPa = 1e9
 mm = 1e-3
@@ -369,6 +367,7 @@ def main():
 
 
 if __name__ == "__main__":
+    import FolderActions
+
     main()
-    
     FolderActions.delete_pycache()

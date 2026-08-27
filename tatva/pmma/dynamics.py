@@ -2542,6 +2542,7 @@ def run_simulation_dumped(
     compression: str = "lzf",
     include_initial_frame: bool = True,
     store_bulk_strain: bool = True,
+    store_bulk_velocity: bool = True,
     checkpoint_path: Path | None = None,
     checkpoint_interval_seconds: float | None = None,
     checkpoint_deadline_monotonic: float | None = None,
@@ -3364,7 +3365,13 @@ def run_simulation_dumped(
         grp.create_dataset("plot_parent_elements", data=np.asarray(block.plot_parent_elements))
         kwargs = dict(compression=compression, chunks=(1, n_nodes, dimension))
         grp.create_dataset("displacement", shape=(n_frames, n_nodes, dimension), dtype="f4", **kwargs)
-        grp.create_dataset("velocity", shape=(n_frames, n_nodes, dimension), dtype="f4", **kwargs)
+        if store_bulk_velocity:
+            grp.create_dataset(
+                "velocity",
+                shape=(n_frames, n_nodes, dimension),
+                dtype="f4",
+                **kwargs,
+            )
         elem_kwargs = dict(compression=compression, chunks=(1, n_elem, dimension, dimension))
         if store_bulk_strain:
             grp.create_dataset(
@@ -3410,14 +3417,20 @@ def run_simulation_dumped(
             sigma_stationary,
         ) = observe_fields(u_flat, v_half)
         h5["moving/displacement"][frame_idx] = np.asarray(u_moving, dtype=np.float32)
-        h5["moving/velocity"][frame_idx] = np.asarray(v_moving, dtype=np.float32)
+        if store_bulk_velocity:
+            h5["moving/velocity"][frame_idx] = np.asarray(
+                v_moving, dtype=np.float32
+            )
         if store_bulk_strain:
             h5["moving/strain"][frame_idx] = np.asarray(
                 eps_moving, dtype=np.float32
             )
         h5["moving/stress"][frame_idx] = np.asarray(sigma_moving, dtype=np.float32)
         h5["stationary/displacement"][frame_idx] = np.asarray(u_stationary, dtype=np.float32)
-        h5["stationary/velocity"][frame_idx] = np.asarray(v_stationary, dtype=np.float32)
+        if store_bulk_velocity:
+            h5["stationary/velocity"][frame_idx] = np.asarray(
+                v_stationary, dtype=np.float32
+            )
         if store_bulk_strain:
             h5["stationary/strain"][frame_idx] = np.asarray(
                 eps_stationary, dtype=np.float32
@@ -3601,6 +3614,7 @@ def run_simulation_dumped(
         h5.attrs["thickness"] = float(model["thickness"])
         h5.attrs["include_initial_frame"] = int(include_initial_frame)
         h5.attrs["store_bulk_strain"] = int(store_bulk_strain)
+        h5.attrs["store_bulk_velocity"] = int(store_bulk_velocity)
         h5.attrs["normal_ramp_time"] = model["normal_ramp_time"]
         h5.attrs["normal_ramp_steps"] = model["normal_ramp_steps"]
         h5.attrs["shear_ramp_time"] = model["shear_ramp_time"]

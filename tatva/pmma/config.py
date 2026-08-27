@@ -78,6 +78,7 @@ class OutputConfig:
     maximum_dump_tb: float
     checkpoint_interval_minutes: float
     store_bulk_strain: bool = True
+    store_bulk_velocity: bool = True
 
 
 @dataclass(frozen=True)
@@ -85,6 +86,7 @@ class RSFZoneConfig:
     direct_effect: float
     state_effect: float
     characteristic_slip: float
+    reference_friction: float | None = None
 
 
 @dataclass(frozen=True)
@@ -131,6 +133,11 @@ def _zone(payload: dict[str, Any], name: str) -> RSFZoneConfig:
             direct_effect=float(payload["a"]),
             state_effect=float(payload["b"]),
             characteristic_slip=float(payload["dc"]),
+            reference_friction=(
+                None
+                if "f0" not in payload
+                else float(payload["f0"])
+            ),
         )
     except KeyError as exc:
         raise ValueError(f"Missing rsf.{name}.{exc.args[0]} in the case file.") from exc
@@ -138,6 +145,8 @@ def _zone(payload: dict[str, Any], name: str) -> RSFZoneConfig:
         raise ValueError(f"rsf.{name} requires a > 0 and b >= 0.")
     if zone.characteristic_slip <= 0.0:
         raise ValueError(f"rsf.{name}.dc must be positive.")
+    if zone.reference_friction is not None and zone.reference_friction <= 0.0:
+        raise ValueError(f"rsf.{name}.f0 must be positive.")
     return zone
 
 
@@ -271,6 +280,7 @@ def load_case_config(path: str | Path) -> PMMACaseConfig:
                 output.get("checkpoint_interval_minutes", 20.0)
             ),
             store_bulk_strain=bool(output.get("store_bulk_strain", True)),
+            store_bulk_velocity=bool(output.get("store_bulk_velocity", True)),
         ),
         rsf=RSFConfig(
             initial_friction=float(rsf["initial_friction"]),

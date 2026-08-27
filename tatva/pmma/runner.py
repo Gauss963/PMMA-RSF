@@ -18,7 +18,7 @@ from tatva.pmma.dynamics import (
     SimulationCheckpointed,
     run_simulation_dumped,
 )
-from tatva.pmma.config import PMMACaseConfig
+from tatva.pmma.config import PMMACaseConfig, RSFZoneConfig
 from tatva.pmma.estimate import estimate_case_size
 from tatva.pmma.model import (
     BlockSpec,
@@ -76,6 +76,19 @@ def make_case(config: PMMACaseConfig) -> PMMAModelInput:
 
 def rate_state_profile_spec(config: PMMACaseConfig) -> dict[str, Any]:
     rsf = config.rsf
+
+    def zone_payload(zone: RSFZoneConfig) -> dict[str, float]:
+        return {
+            "a": zone.direct_effect,
+            "b": zone.state_effect,
+            "dc": zone.characteristic_slip,
+            "f0": (
+                rsf.initial_friction
+                if zone.reference_friction is None
+                else zone.reference_friction
+            ),
+        }
+
     return {
         "initial_friction": rsf.initial_friction,
         "reference_velocity": rsf.reference_velocity,
@@ -84,21 +97,9 @@ def rate_state_profile_spec(config: PMMACaseConfig) -> dict[str, Any]:
         "loading_length": rsf.loading_length,
         "leading_length": rsf.leading_length,
         "transition_length": rsf.transition_length,
-        "loading": {
-            "a": rsf.loading.direct_effect,
-            "b": rsf.loading.state_effect,
-            "dc": rsf.loading.characteristic_slip,
-        },
-        "middle": {
-            "a": rsf.middle.direct_effect,
-            "b": rsf.middle.state_effect,
-            "dc": rsf.middle.characteristic_slip,
-        },
-        "leading": {
-            "a": rsf.leading.direct_effect,
-            "b": rsf.leading.state_effect,
-            "dc": rsf.leading.characteristic_slip,
-        },
+        "loading": zone_payload(rsf.loading),
+        "middle": zone_payload(rsf.middle),
+        "leading": zone_payload(rsf.leading),
     }
 
 
@@ -231,14 +232,20 @@ def preflight(config: PMMACaseConfig) -> dict[str, Any]:
     estimate["rsf_zones"] = {}
     for name in ("loading", "middle", "leading"):
         zone = getattr(config.rsf, name)
+        reference_friction = (
+            config.rsf.initial_friction
+            if zone.reference_friction is None
+            else zone.reference_friction
+        )
         estimate["rsf_zones"][name] = {
             "a": zone.direct_effect,
             "b": zone.state_effect,
             "a_minus_b": zone.direct_effect - zone.state_effect,
             "dc_mm": zone.characteristic_slip,
+            "reference_friction": reference_friction,
             "steady_mu_at_initial_velocity": regularized_steady_friction(
                 velocity=config.rsf.initial_steady_velocity,
-                reference_friction=config.rsf.initial_friction,
+                reference_friction=reference_friction,
                 direct_effect=zone.direct_effect,
                 state_effect=zone.state_effect,
                 reference_velocity=config.rsf.reference_velocity,
@@ -246,7 +253,7 @@ def preflight(config: PMMACaseConfig) -> dict[str, Any]:
             "steady_mu_at_dynamic_calibration_velocity": (
                 regularized_steady_friction(
                     velocity=config.rsf.dynamic_calibration_velocity,
-                    reference_friction=config.rsf.initial_friction,
+                    reference_friction=reference_friction,
                     direct_effect=zone.direct_effect,
                     state_effect=zone.state_effect,
                     reference_velocity=config.rsf.reference_velocity,
@@ -369,6 +376,7 @@ def run_case(
             compression=config.output.compression,
             include_initial_frame=config.output.include_initial_frame,
             store_bulk_strain=config.output.store_bulk_strain,
+            store_bulk_velocity=config.output.store_bulk_velocity,
             checkpoint_path=run_dir / "checkpoint.npz",
             checkpoint_interval_seconds=(
                 60.0 * config.output.checkpoint_interval_minutes

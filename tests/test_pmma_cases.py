@@ -44,6 +44,7 @@ TS0118_CASE = ROOT / "cases/rsf_0118_q4_explicit_10h.toml"
 TS0119_CASE = ROOT / "cases/rsf_0119_q4_explicit_10h.toml"
 TS0120_CASE = ROOT / "cases/rsf_0120_q4_fully_explicit_12h.toml"
 TS0121_CASE = ROOT / "cases/rsf_0121_q4_slow_strong_vs_12h.toml"
+TS0122_CASE = ROOT / "cases/rsf_0122_q4_slow_rsf_buffer_12h.toml"
 
 
 def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
@@ -368,7 +369,37 @@ def test_ts0121_slows_shear_and_strengthens_leading_edge_at_full_output_rate():
     )
 
 
-def test_regularized_dump_can_omit_unused_bulk_strain(tmp_path):
+def test_ts0122_uses_a_low_f0_velocity_strengthening_buffer():
+    config = load_case_config(TS0122_CASE)
+    estimate = estimate_case_size(config)
+    profile = build_rate_state_profile(
+        np.arange(0.0, 500.5, 0.5), make_run_config(config).rsf_profile_spec
+    )
+
+    assert config.loading.shear_phase_time == pytest.approx(0.057)
+    assert config.loading.shear_ramp_time == pytest.approx(0.057)
+    assert config.rsf.leading_length == pytest.approx(50.0)
+    assert config.rsf.transition_length == pytest.approx(50.0)
+    assert config.rsf.leading.reference_friction == pytest.approx(0.70)
+    assert config.rsf.leading.direct_effect - config.rsf.leading.state_effect == (
+        pytest.approx(0.008)
+    )
+    assert profile["reference_friction"][400] == pytest.approx(0.8)
+    assert profile["reference_friction"][900] == pytest.approx(0.7)
+    assert profile["reference_friction"][-1] == pytest.approx(0.7)
+    assert config.output.store_bulk_strain is False
+    assert config.output.store_bulk_velocity is False
+    assert config.output.bulk_shear_frames == 70_759
+    assert config.output.interface_shear_frames == 589_655
+    assert estimate["configured_steps_estimate"] == 9_700_000
+    assert (
+        estimate["estimated_uncompressed_tb"]
+        * config.output.estimated_compression_ratio
+        < config.output.maximum_dump_tb
+    )
+
+
+def test_regularized_dump_can_omit_unused_bulk_fields(tmp_path):
     from dataclasses import replace
 
     config = load_case_config(PRODUCTION_CASE)
@@ -398,14 +429,18 @@ def test_regularized_dump_can_omit_unused_bulk_strain(tmp_path):
         shear_interface_frames_per_phase=6,
         include_initial_frame=False,
         store_bulk_strain=False,
+        store_bulk_velocity=False,
     )
 
     with h5py.File(output, "r") as h5:
         assert "strain" not in h5["moving"]
         assert "strain" not in h5["stationary"]
+        assert "velocity" not in h5["moving"]
+        assert "velocity" not in h5["stationary"]
         assert "stress" in h5["moving"]
         assert "stress" in h5["stationary"]
         assert h5.attrs["store_bulk_strain"] == 0
+        assert h5.attrs["store_bulk_velocity"] == 0
 
 
 def test_estimator_matches_remainder_cells_used_by_structured_mesh():

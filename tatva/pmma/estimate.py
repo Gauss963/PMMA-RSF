@@ -61,10 +61,11 @@ def estimate_case_size(config: PMMACaseConfig) -> dict[str, Any]:
     )
     fault_nodes = fault_cells + 1
 
-    # Per bulk frame: u/v at nodes, stress, and optionally strain at elements.
+    # Per bulk frame: displacement, optional velocity, stress, and optional strain.
+    node_vector_count = 2 if config.output.store_bulk_velocity else 1
     element_tensor_count = 2 if config.output.store_bulk_strain else 1
     bytes_per_bulk_frame = 4 * (
-        4 * nodes + 4 * element_tensor_count * elements
+        2 * node_vector_count * nodes + 4 * element_tensor_count * elements
     )
     # Seven dynamic interface arrays plus a 13-column history row.
     bytes_per_interface_frame = 4 * (7 * fault_nodes + 13)
@@ -120,6 +121,7 @@ def estimate_case_size(config: PMMACaseConfig) -> dict[str, Any]:
         "bytes_per_bulk_frame": bytes_per_bulk_frame,
         "bytes_per_interface_frame": bytes_per_interface_frame,
         "store_bulk_strain": config.output.store_bulk_strain,
+        "store_bulk_velocity": config.output.store_bulk_velocity,
         "estimated_uncompressed_bytes": estimated_bytes,
         "estimated_uncompressed_gb": estimated_bytes / 1.0e9,
         "estimated_uncompressed_tb": estimated_bytes / 1.0e12,
