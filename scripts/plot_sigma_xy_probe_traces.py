@@ -449,10 +449,10 @@ def _select_dense_and_tail_frames(
 
 def _subplot_grid(station_count: int) -> tuple[int, int, tuple[float, float]]:
     if station_count <= 4:
-        return 2, 2, (16.0, 9.0)
+        return 2, 2, (7.2, 5.0)
     columns = 3
     rows = math.ceil(station_count / columns)
-    return rows, columns, (16.0, max(9.0, 2.35 * rows + 2.8))
+    return rows, columns, (7.2, max(5.0, 1.65 * rows + 1.8))
 
 
 def _configure_time_axis(
@@ -501,12 +501,12 @@ def _plot_time_histories(
         squeeze=False,
     )
     figure.subplots_adjust(
-        left=0.07,
-        right=0.965,
+        left=0.075,
+        right=0.985,
         top=0.76,
-        bottom=0.12,
-        wspace=0.13,
-        hspace=0.27,
+        bottom=0.115,
+        wspace=0.16,
+        hspace=0.28,
     )
     axes_flat = axes.ravel()
     view_mask = (time_ms >= view_start_ms) & (time_ms <= view_end_ms)
@@ -578,7 +578,7 @@ def _plot_time_histories(
                 ),
                 transform=axis.transAxes,
                 color=MUTED,
-                fontsize=9.2,
+                fontsize=6.5,
                 va="top",
             )
         axis.grid()
@@ -593,7 +593,7 @@ def _plot_time_histories(
             axis.legend(
                 handles=[tip_line, residual_patch],
                 loc="lower left",
-                fontsize=9.0,
+                fontsize=6.4,
                 ncol=2,
             )
 
@@ -604,51 +604,35 @@ def _plot_time_histories(
         handles=distance_lines,
         labels=[rf"$d_\perp={distance:g}$ mm" for distance in distances],
         loc="upper center",
-        bbox_to_anchor=(0.52, 0.822),
+        bbox_to_anchor=(0.53, 0.865),
         ncol=len(distances),
         frameon=False,
-        fontsize=10.2,
-        handlelength=2.4,
-        columnspacing=1.5,
+        fontsize=6.7,
+        handlelength=1.8,
+        columnspacing=0.9,
     )
 
     quantity = "Traction-positive shear stress" if raw_sigma else r"$\Delta\tau$ time histories"
     figure.text(
-        0.07,
-        0.955,
-        f"Run {run_id}  |  {quantity}",
-        fontsize=24,
-        fontweight="bold",
+        0.075,
+        0.985,
+        f"{quantity} ({run_id})",
+        fontsize=10.5,
+        fontweight="semibold",
         color=INK,
         va="top",
     )
     figure.text(
-        0.07,
-        0.905,
+        0.075,
+        0.951,
         (
             r"Interface traction at $d_\perp=0$ mm; moving-block "
             r"$\sigma_{xy}$ at $d_\perp=1$-5 mm, all in the same "
-            r"traction-positive convention."
+            r"traction-positive convention; "
+            rf"tip=${tip_slip_fraction:g}D_c$; residual=+{residual_start_us:g}--"
+            rf"{residual_end_us:g} $\mu$s."
         ),
-        fontsize=13.5,
-        color=MUTED,
-        va="top",
-    )
-    figure.text(
-        0.07,
-        0.865,
-        (
-            rf"Tip arrival = first local crossing of ${tip_slip_fraction:g}D_c$ "
-            rf"(red). Residual = mean from +{residual_start_us:g} to "
-            rf"+{residual_end_us:g} $\mu$s after the tip (gold)."
-            + (
-                rf" Symmetric-log time: linear within "
-                rf"$\pm{symlog_linthresh_us:g}\,\mu$s."
-                if time_scale == "symlog"
-                else ""
-            )
-        ),
-        fontsize=11.5,
+        fontsize=7.2,
         color=MUTED,
         va="top",
     )
@@ -663,7 +647,9 @@ def _plot_time_histories(
             r"contact resistance. No temporal smoothing."
         )
     )
-    figure.text(0.07, 0.035, footer, fontsize=10.5, color=MUTED)
+    if time_scale == "symlog":
+        footer += rf" Symmetric-log time is linear within $\pm{symlog_linthresh_us:g}\,\mu$s."
+    figure.text(0.075, 0.022, footer, fontsize=6.3, color=MUTED)
     return _save_figure(figure, output_path, dpi)
 
 
@@ -704,12 +690,12 @@ def _plot_permanent_drop_histories(
         squeeze=False,
     )
     figure.subplots_adjust(
-        left=0.07,
-        right=0.965,
+        left=0.075,
+        right=0.985,
         top=0.76,
-        bottom=0.12,
-        wspace=0.13,
-        hspace=0.27,
+        bottom=0.115,
+        wspace=0.16,
+        hspace=0.28,
     )
     axes_flat = axes.ravel()
     displayed_values: list[np.ndarray] = []
@@ -853,7 +839,7 @@ def _plot_permanent_drop_histories(
             ),
             transform=axis.transAxes,
             color=MUTED,
-            fontsize=9.2,
+            fontsize=6.4,
             va="top",
         )
         axis.grid()
@@ -870,7 +856,7 @@ def _plot_permanent_drop_histories(
             axis.legend(
                 handles=event_handles,
                 loc="lower left",
-                fontsize=8.2,
+                fontsize=6.2,
                 ncol=2,
             )
 
@@ -881,65 +867,54 @@ def _plot_permanent_drop_histories(
         handles=distance_lines,
         labels=[rf"$d_\perp={distance:g}$ mm" for distance in distances],
         loc="upper center",
-        bbox_to_anchor=(0.52, 0.822),
+        bbox_to_anchor=(0.53, 0.865),
         ncol=len(distances),
         frameon=False,
-        fontsize=10.2,
-        handlelength=2.4,
-        columnspacing=1.5,
+        fontsize=6.7,
+        handlelength=1.8,
+        columnspacing=0.9,
     )
 
     figure.text(
-        0.07,
-        0.955,
-        f"Run {run_id}  |  Permanent near-fault stress drop",
-        fontsize=24,
-        fontweight="bold",
+        0.075,
+        0.985,
+        f"Permanent near-fault stress drop ({run_id})",
+        fontsize=10.5,
+        fontweight="semibold",
         color=INK,
         va="top",
     )
     figure.text(
-        0.07,
-        0.905,
+        0.075,
+        0.951,
         (
             r"Interface traction at $d_\perp=0$ mm; moving-block "
             r"$\sigma_{xy}$ at $d_\perp=1$-5 mm. "
-            rf"pre-event mean = $-{pre_baseline_start_us:g}$ to "
-            rf"$-{pre_baseline_end_us:g}$ $\mu$s from each local tip."
+            rf"pre-event mean=$-{pre_baseline_start_us:g}$ to "
+            rf"$-{pre_baseline_end_us:g}$ $\mu$s; full rupture="
+            rf"{full_rupture_time_ms:.4f} ms."
         ),
-        fontsize=13.5,
+        fontsize=7.2,
         color=MUTED,
         va="top",
     )
     figure.text(
-        0.07,
-        0.865,
-        (
-            rf"The full fault crosses ${tip_slip_fraction:g}D_c$ by "
-            rf"{full_rupture_time_ms:.4f} ms; late plateau = "
-            rf"{post_window_start_ms:.1f}-{post_window_end_ms:.1f} ms "
-            + (r"(gold)." if post_window_visible else r"(outside this detail window).")
-            + (
-                rf" Symmetric-log time: linear within "
-                rf"$\pm{symlog_linthresh_us:g}\,\mu$s."
-                if time_scale == "symlog"
-                else ""
-            )
-        ),
-        fontsize=11.5,
-        color=MUTED,
-        va="top",
-    )
-    figure.text(
-        0.07,
-        0.035,
+        0.075,
+        0.022,
         (
             r"At 0 mm, $\tau^+$ is reconstructed contact traction; for "
             r"$d_\perp>0$, moving-side $\sigma_{xy}$ is reoriented to the same "
             r"positive resistance. Event: every frame; quiet tail: every "
-            rf"{tail_sample_interval_us:g} $\mu$s, no smoothing."
+            rf"{tail_sample_interval_us:g} $\mu$s, no smoothing. Late plateau="
+            rf"{post_window_start_ms:.1f}--{post_window_end_ms:.1f} ms"
+            + ("." if post_window_visible else " (outside displayed window).")
+            + (
+                rf" Symlog linear within $\pm{symlog_linthresh_us:g}\,\mu$s."
+                if time_scale == "symlog"
+                else ""
+            )
         ),
-        fontsize=10.5,
+        fontsize=6.3,
         color=MUTED,
     )
     return _save_figure(figure, output_path, dpi)
@@ -963,16 +938,16 @@ def _plot_probe_layout(
     fault_x = float(x_max)
     target_x = fault_x - x_from_fault
 
-    figure = plt.figure(figsize=(16.0, 9.0))
+    figure = plt.figure(figsize=(7.2, 4.2))
     grid = figure.add_gridspec(
         1,
         2,
         left=0.08,
-        right=0.94,
-        top=0.82,
-        bottom=0.10,
-        width_ratios=[1.15, 0.85],
-        wspace=0.13,
+        right=0.98,
+        top=0.87,
+        bottom=0.12,
+        width_ratios=[1.25, 0.75],
+        wspace=0.10,
     )
     geometry_axis = figure.add_subplot(grid[0])
     note_axis = figure.add_subplot(grid[1])
@@ -1014,7 +989,7 @@ def _plot_probe_layout(
         geometry_axis.scatter(
             x_value,
             y_value,
-            s=72,
+            s=28,
             color=color,
             edgecolor="white",
             linewidth=1.0,
@@ -1028,7 +1003,7 @@ def _plot_probe_layout(
             ha="right",
             va="center",
             color=color,
-            fontsize=11,
+            fontsize=7.0,
             fontweight="semibold",
         )
     geometry_axis.set_xlim(x_min - 20.0, x_max + 20.0)
@@ -1051,8 +1026,8 @@ def _plot_probe_layout(
         "Stress convention",
         transform=note_axis.transAxes,
         color=INK,
-        fontsize=18,
-        fontweight="bold",
+        fontsize=9.0,
+        fontweight="semibold",
     )
     equation_text = (
         (
@@ -1075,8 +1050,8 @@ def _plot_probe_layout(
         equation_text,
         transform=note_axis.transAxes,
         color=INK,
-        fontsize=17,
-        linespacing=1.9,
+        fontsize=8.5,
+        linespacing=1.6,
         va="top",
     )
     note_axis.text(
@@ -1090,30 +1065,30 @@ def _plot_probe_layout(
         ),
         transform=note_axis.transAxes,
         color=MUTED,
-        fontsize=12,
-        linespacing=1.45,
+        fontsize=7.0,
+        linespacing=1.35,
         va="top",
         wrap=True,
     )
 
     figure.text(
         0.08,
-        0.955,
-        f"Run {run_id}  |  Near-fault time-history probes",
-        fontsize=24,
-        fontweight="bold",
+        0.985,
+        f"Near-fault time-history probes ({run_id})",
+        fontsize=10.5,
+        fontweight="semibold",
         color=INK,
         va="top",
     )
     figure.text(
         0.08,
-        0.900,
+        0.949,
         (
             "Probe positions and the pre-event-referenced stress-drop definition"
             if baseline_mode == "pre-event"
             else "Probe positions and the residual-referenced shear-stress definition"
         ),
-        fontsize=13.5,
+        fontsize=7.2,
         color=MUTED,
         va="top",
     )

@@ -235,18 +235,18 @@ def plot_on_fault_rates(
     figure, axes = plt.subplots(
         2,
         2,
-        figsize=(16.0, 9.0),
+        figsize=(7.2, 5.0),
         sharex=True,
         sharey=True,
         squeeze=False,
     )
     figure.subplots_adjust(
         left=0.075,
-        right=0.925,
-        top=0.79,
-        bottom=0.12,
-        wspace=0.18,
-        hspace=0.27,
+        right=0.94,
+        top=0.76,
+        bottom=0.115,
+        wspace=0.20,
+        hspace=0.28,
     )
     axes_flat = axes.ravel()
     slip_axes: list[plt.Axes] = []
@@ -289,7 +289,7 @@ def plot_on_fault_rates(
                 local_time_ms,
                 stress_rate[:, station_index],
                 color=STRESS_RAW,
-                linewidth=0.55,
+                linewidth=0.45,
                 alpha=0.12,
                 zorder=2,
             )
@@ -297,7 +297,7 @@ def plot_on_fault_rates(
             local_time_ms,
             stress_rate_smooth[:, station_index],
             color=STRESS_BLUE,
-            linewidth=1.45,
+            linewidth=1.0,
             zorder=4,
             label=r"stress rate $d\tau/dt$",
         )[0]
@@ -305,7 +305,7 @@ def plot_on_fault_rates(
             local_time_ms,
             slip_rate_smooth[:, station_index],
             color=SLIP_GREEN,
-            linewidth=1.55,
+            linewidth=1.05,
             zorder=5,
             label=r"slip rate $d\delta/dt$",
         )[0]
@@ -382,38 +382,38 @@ def plot_on_fault_rates(
 
     figure.text(
         0.075,
-        0.955,
-        f"Run {_run_id(input_path)}  |  On-fault slip and stress rates",
-        fontsize=24,
-        fontweight="bold",
+        0.985,
+        f"On-fault slip and stress rates ({_run_id(input_path)})",
+        fontsize=10.5,
+        fontweight="semibold",
         color=INK,
         va="top",
     )
     figure.text(
         0.075,
-        0.902,
+        0.951,
         (
             r"Interface contact traction and cumulative frictional slip; "
             rf"Gaussian derivatives: $\sigma_\tau={stress_smoothing_us:g}$ "
             rf"$\mu$s and $\sigma_\delta={slip_smoothing_us:g}$ $\mu$s."
         ),
-        fontsize=13.5,
+        fontsize=7.2,
         color=MUTED,
         va="top",
     )
     figure.legend(
         handles=legend_handles + event_handles,
         loc="upper center",
-        bbox_to_anchor=(0.52, 0.845),
+        bbox_to_anchor=(0.52, 0.865),
         ncol=4,
         frameon=False,
-        fontsize=10.2,
-        handlelength=2.7,
-        columnspacing=1.5,
+        fontsize=6.6,
+        handlelength=1.9,
+        columnspacing=1.0,
     )
     figure.text(
         0.075,
-        0.035,
+        0.022,
         (
             r"Stress rate is signed and uses a symmetric-log axis; slip rate "
             r"is the non-negative derivative of cumulative frictional slip. "
@@ -423,7 +423,7 @@ def plot_on_fault_rates(
                 else r"Raw derivative is omitted to expose the event-scale response."
             )
         ),
-        fontsize=10.5,
+        fontsize=6.3,
         color=MUTED,
     )
 

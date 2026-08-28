@@ -13,11 +13,11 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 
-BACKGROUND = "#F7F4EE"
-PANEL = "#FFFEFA"
-INK = "#18313A"
-MUTED = "#68767B"
-GRID = "#D9D6CE"
+BACKGROUND = "#FFFFFF"
+PANEL = "#FFFFFF"
+INK = "#202124"
+MUTED = "#5F6368"
+GRID = "#DADCE0"
 TEAL = "#087F8C"
 NAVY = "#1E4D6B"
 ORANGE = "#E87524"
@@ -134,22 +134,29 @@ def configure_style() -> None:
     plt.rcParams.update(
         {
             "font.family": "sans-serif",
-            "font.sans-serif": ["Avenir Next", "Avenir", "DejaVu Sans"],
-            "font.size": 12,
-            "axes.titlesize": 15,
-            "axes.labelsize": 13,
+            "font.sans-serif": ["Arial", "Helvetica", "DejaVu Sans"],
+            "font.size": 8.0,
+            "axes.titlesize": 9.0,
+            "axes.labelsize": 8.5,
             "axes.titleweight": "semibold",
             "axes.labelcolor": INK,
             "axes.edgecolor": INK,
-            "axes.linewidth": 1.0,
+            "axes.linewidth": 0.8,
             "xtick.color": INK,
             "ytick.color": INK,
+            "xtick.labelsize": 7.5,
+            "ytick.labelsize": 7.5,
+            "xtick.major.width": 0.7,
+            "ytick.major.width": 0.7,
             "grid.color": GRID,
-            "grid.linewidth": 0.8,
-            "grid.alpha": 0.70,
+            "grid.linewidth": 0.5,
+            "grid.alpha": 0.55,
             "legend.frameon": False,
+            "legend.fontsize": 7.0,
             "figure.facecolor": BACKGROUND,
             "savefig.facecolor": BACKGROUND,
+            "savefig.bbox": "tight",
+            "savefig.pad_inches": 0.04,
             "pdf.fonttype": 42,
             "ps.fonttype": 42,
         }
@@ -638,17 +645,17 @@ def plot_station_panels(
     figure, axes = plt.subplots(
         2,
         2,
-        figsize=(16.0, 9.0),
+        figsize=(7.2, 5.15),
         sharex=True,
         constrained_layout=False,
     )
     figure.subplots_adjust(
-        left=0.07,
-        right=0.965,
-        top=0.80,
-        bottom=0.12,
-        wspace=0.13,
-        hspace=0.25,
+        left=0.075,
+        right=0.985,
+        top=0.875,
+        bottom=0.115,
+        wspace=0.16,
+        hspace=0.27,
     )
     axes_flat = axes.ravel()
 
@@ -672,7 +679,7 @@ def plot_station_panels(
                 color=DISTANCE_COLORS[
                     distance_index % len(DISTANCE_COLORS)
                 ],
-                linewidth=1.35,
+                linewidth=0.9,
             )
             label_x = xi_max - 2.0
             label_y = float(
@@ -690,7 +697,7 @@ def plot_station_panels(
                 color=DISTANCE_COLORS[
                     distance_index % len(DISTANCE_COLORS)
                 ],
-                fontsize=10.2,
+                fontsize=6.5,
                 ha="right",
                 va="bottom",
                 bbox={
@@ -721,21 +728,21 @@ def plot_station_panels(
             [scale_x, scale_x],
             [scale_bottom, scale_bottom + scale_mpa],
             color=INK,
-            linewidth=2.0,
+            linewidth=1.2,
             clip_on=False,
         )
         axis.plot(
             [scale_x - 1.0, scale_x + 1.0],
             [scale_bottom, scale_bottom],
             color=INK,
-            linewidth=1.5,
+            linewidth=0.9,
             clip_on=False,
         )
         axis.plot(
             [scale_x - 1.0, scale_x + 1.0],
             [scale_bottom + scale_mpa, scale_bottom + scale_mpa],
             color=INK,
-            linewidth=1.5,
+            linewidth=0.9,
             clip_on=False,
         )
         axis.text(
@@ -743,7 +750,7 @@ def plot_station_panels(
             scale_bottom + 0.5 * scale_mpa,
             "2 MPa",
             color=INK,
-            fontsize=9.5,
+            fontsize=6.5,
             va="center",
         )
 
@@ -754,51 +761,38 @@ def plot_station_panels(
         )
 
     figure.text(
-        0.07,
-        0.955,
-        f"Run {run_id}  |  Near-fault shear-stress fluctuation",
-        fontsize=24,
-        fontweight="bold",
+        0.075,
+        0.985,
+        f"Near-fault shear-stress fluctuation ({run_id})",
+        fontsize=10.5,
+        fontweight="semibold",
         color=INK,
         va="top",
     )
     figure.text(
-        0.07,
-        0.905,
+        0.075,
+        0.951,
         (
-            r"Kammer-McLaskey Fig. 2 construction: "
             r"$\xi=-C_f(t-t_{\mathrm{tip}})$, "
             rf"$C_f={float(speed_fit['speed_m_per_s']) / 1e3:.3f}$ km/s "
-            rf"($0.05D_c$, $R^2={float(speed_fit['r_squared']):.4f}$)."
+            rf"($0.05D_c$, $R^2={float(speed_fit['r_squared']):.4f}$); "
+            rf"$0.5D_c$ fit={float(half_dc_fit['speed_m_per_s']) / 1e3:.3f} km/s; "
+            rf"$X_c={cohesive_zone_mm:.2f}$ mm."
         ),
-        fontsize=13.5,
+        fontsize=7.3,
         color=MUTED,
         va="top",
     )
     figure.text(
-        0.07,
-        0.867,
-        (
-            rf"Consistency check: $0.5D_c$ fit = "
-            rf"{float(half_dc_fit['speed_m_per_s']) / 1e3:.3f} km/s. "
-            r"Gold = measured cohesive zone; red = tip proxy. "
-            r"All curves use the paper's traction-positive polarity; "
-            r"moving-side $\sigma_{xy}$ is sign-corrected accordingly."
-        ),
-        fontsize=11.5,
-        color=MUTED,
-        va="top",
-    )
-    figure.text(
-        0.07,
-        0.035,
+        0.075,
+        0.022,
         (
             r"At 0 mm, $\Delta\tau=\tau-\tau^r$; for $d_\perp>0$, "
             r"$\Delta\sigma_{xy}=\sigma_{xy}-\sigma_{xy}^{r}$ in the same "
-            r"traction-positive polarity. Residuals use the local 40-50 $\mu$s "
-            "post-tip mean; traces are vertically shifted within each station."
+            r"traction-positive polarity; residual = local 40--50 $\mu$s "
+            "post-tip mean. Traces are vertically offset."
         ),
-        fontsize=10.5,
+        fontsize=6.4,
         color=MUTED,
     )
     return save_figure(
@@ -823,16 +817,16 @@ def plot_collapse_panels(
     output_dir: Path,
     dpi: int,
 ) -> tuple[Path, Path]:
-    figure = plt.figure(figsize=(16.0, 9.0))
+    figure = plt.figure(figsize=(7.2, 5.2))
     grid = figure.add_gridspec(
         2,
         4,
-        left=0.07,
-        right=0.965,
-        top=0.80,
-        bottom=0.12,
-        wspace=0.27,
-        hspace=0.31,
+        left=0.075,
+        right=0.985,
+        top=0.885,
+        bottom=0.115,
+        wspace=0.42,
+        hspace=0.33,
     )
     distance_axes = [figure.add_subplot(grid[0, column]) for column in range(4)]
     distance_axes.extend(
@@ -855,7 +849,7 @@ def plot_collapse_panels(
                 color=STATION_COLORS[
                     station_index % len(STATION_COLORS)
                 ],
-                linewidth=1.05,
+                linewidth=0.75,
                 alpha=0.82,
                 label=rf"$y={station:.0f}$ mm",
             )
@@ -863,7 +857,7 @@ def plot_collapse_panels(
             xi,
             np.median(station_curves, axis=1),
             color=INK,
-            linewidth=2.2,
+            linewidth=1.35,
             label="station median",
             zorder=5,
         )
@@ -883,7 +877,7 @@ def plot_collapse_panels(
                 else r"$\Delta\sigma_{xy}$ [MPa]"
             )
         if distance_index == 0:
-            axis.legend(loc="upper left", fontsize=9.2, ncol=2)
+            axis.legend(loc="upper left", fontsize=6.2, ncol=2)
 
     amplitude_axis = figure.add_subplot(grid[1, 2:])
     amplitude_axis.set_facecolor(PANEL)
@@ -893,8 +887,8 @@ def plot_collapse_panels(
             stations,
             peak_to_peak[:, distance_index],
             marker="o",
-            markersize=5.0,
-            linewidth=1.8,
+            markersize=3.2,
+            linewidth=1.0,
             color=DISTANCE_COLORS[
                 distance_index % len(DISTANCE_COLORS)
             ],
@@ -905,55 +899,42 @@ def plot_collapse_panels(
         loc="left",
     )
     amplitude_axis.set_xlabel("Station along fault, y [mm]")
-    amplitude_axis.set_ylabel("Peak-to-peak stress fluctuation [MPa]")
+    amplitude_axis.set_ylabel("Peak-to-peak amplitude [MPa]")
     amplitude_axis.grid()
     amplitude_axis.spines[["top", "right"]].set_visible(False)
-    amplitude_axis.legend(fontsize=9.2, ncol=2)
+    amplitude_axis.legend(fontsize=6.2, ncol=2)
 
     figure.text(
-        0.07,
-        0.955,
-        f"Run {run_id}  |  Does the near-tip stress field collapse?",
-        fontsize=24,
-        fontweight="bold",
+        0.075,
+        0.985,
+        f"Near-tip stress-field collapse ({run_id})",
+        fontsize=10.5,
+        fontweight="semibold",
         color=INK,
         va="top",
     )
     figure.text(
-        0.07,
-        0.905,
+        0.075,
+        0.951,
         (
             r"All stations use the same stable-front transform "
             rf"$C_f={float(speed_fit['speed_m_per_s']) / 1e3:.3f}$ km/s. "
-            "A strictly steady cohesive-crack field would collapse onto one "
-            "curve at each off-fault distance."
+            "Black: station median; colors: individual stations."
         ),
-        fontsize=13.5,
+        fontsize=7.3,
         color=MUTED,
         va="top",
     )
     figure.text(
-        0.07,
-        0.865,
-        (
-            "The partial mismatch and downstream amplitude growth diagnose "
-            "non-steady wave content superposed on the propagating front; "
-            "they should not be hidden by cherry-picking one station."
-        ),
-        fontsize=11.5,
-        color=MUTED,
-        va="top",
-    )
-    figure.text(
-        0.07,
-        0.035,
+        0.075,
+        0.022,
         (
             r"Coordinate note: the simulation uses $y$ along the fault and "
             r"$x$ normal to it. Thus $\xi=y-y_{\mathrm{tip}}$ here is the "
             r"paper's $x-x_{\mathrm{tip}}$. Stress polarity follows the "
             r"paper's positive resisting traction."
         ),
-        fontsize=10.5,
+        fontsize=6.4,
         color=MUTED,
     )
     return save_figure(
@@ -1031,14 +1012,14 @@ def plot_on_fault_triangle_zoom(
     output_dir: Path,
     dpi: int,
 ) -> tuple[Path, Path]:
-    figure, axes = plt.subplots(2, 2, figsize=(16.0, 9.0))
+    figure, axes = plt.subplots(2, 2, figsize=(7.2, 5.15))
     figure.subplots_adjust(
         left=0.075,
-        right=0.965,
-        top=0.80,
-        bottom=0.12,
-        wspace=0.17,
-        hspace=0.31,
+        right=0.985,
+        top=0.875,
+        bottom=0.115,
+        wspace=0.18,
+        hspace=0.32,
     )
     zoom_extent = max(5.0, 3.0 * cohesive_zone_mm)
     for station_index, (axis, station) in enumerate(
@@ -1060,9 +1041,9 @@ def plot_on_fault_triangle_zoom(
             plot_x,
             plot_y,
             color=ORANGE,
-            linewidth=2.0,
+            linewidth=1.1,
             marker="o",
-            markersize=3.8,
+            markersize=2.2,
             label="raw saved samples",
             zorder=4,
         )
@@ -1078,7 +1059,7 @@ def plot_on_fault_triangle_zoom(
                 fit_x,
                 fit_y,
                 color=INK,
-                linewidth=2.0,
+                linewidth=1.2,
                 linestyle=(0, (5, 3)),
                 label="linear fit inside measured $X_c$",
                 zorder=5,
@@ -1097,51 +1078,36 @@ def plot_on_fault_triangle_zoom(
         axis.grid()
         axis.spines[["top", "right"]].set_visible(False)
         if station_index == 0:
-            axis.legend(loc="lower left", fontsize=10.5)
+            axis.legend(loc="lower left", fontsize=6.8)
 
     figure.text(
         0.075,
-        0.955,
-        f"Run {run_id}  |  Does the on-fault cohesive triangle emerge?",
-        fontsize=24,
-        fontweight="bold",
+        0.985,
+        f"On-fault cohesive-zone shape ({run_id})",
+        fontsize=10.5,
+        fontweight="semibold",
         color=INK,
         va="top",
     )
     figure.text(
         0.075,
-        0.905,
+        0.951,
         (
-            r"Positive resisting interface traction, no temporal smoothing or spatial "
-            r"interpolation. Black fits use only raw samples in "
-            r"$-X_c\leq\xi\leq0$."
+            rf"Positive resisting traction; raw samples; $X_c={cohesive_zone_mm:.2f}$ mm. "
+            r"Dashed fits use $-X_c\leq\xi\leq0$."
         ),
-        fontsize=13.5,
+        fontsize=7.3,
         color=MUTED,
         va="top",
     )
     figure.text(
         0.075,
-        0.865,
+        0.022,
         (
-            rf"Measured $X_c={cohesive_zone_mm:.2f}$ mm; gold marks the "
-            r"cohesive zone and red marks the $0.05D_c$ tip proxy. "
-            r"Only 3-4 saved points resolve $X_c$, so shape is visible but "
-            r"the fitted slope is not yet mesh-converged."
+            r"Gold: measured cohesive zone; red: $0.05D_c$ tip proxy. "
+            r"The fitted slope is not assumed mesh-converged."
         ),
-        fontsize=11.5,
-        color=MUTED,
-        va="top",
-    )
-    figure.text(
-        0.075,
-        0.035,
-        (
-            r"Fig. 2 expectation: the on-fault traction changes linearly "
-            r"through the cohesive zone, while off-fault stress develops an "
-            r"oscillatory waveform."
-        ),
-        fontsize=10.5,
+        fontsize=6.4,
         color=MUTED,
     )
     return save_figure(
@@ -1168,7 +1134,7 @@ def main() -> int:
     distances = np.asarray(args.off_fault_distances, dtype=np.float64)
     if len(stations_requested) != 4:
         raise ValueError(
-            "The slide-ready station figure requires exactly four stations."
+            "The station figure requires exactly four stations."
         )
     if len(distances) != 6:
         raise ValueError(
