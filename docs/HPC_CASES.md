@@ -23,14 +23,14 @@ Preflight a case without constructing a mesh or creating a run directory:
 
 ```bash
 python scripts/run_case.py \
-  cases/rsf_0122_q4_slow_rsf_buffer_12h.toml --preflight
+  cases/rsf_0123_q4_uniform_leading_slow_12h.toml --preflight
 ```
 
 Run it locally:
 
 ```bash
 python scripts/run_case.py \
-  cases/rsf_0122_q4_slow_rsf_buffer_12h.toml
+  cases/rsf_0123_q4_uniform_leading_slow_12h.toml
 ```
 
 Submit the default 0.50 mm Q4 explicit production case on one H200:
@@ -139,3 +139,14 @@ TS0120 physical sampling intervals. Bulk velocity is omitted together with
 bulk strain because production analysis uses the stored displacement, stress,
 scalar energy history, and high-rate interface slip rate. The calibrated dump
 estimate remains 1.183 TB.
+
+TS0123 is a controlled ablation of the TS0122 terminal buffer. The leading
+zone is identical to the middle velocity-weakening zone, so there is no
+terminal `f0`, `a`, `b`, or `D_c` gradient. The neutral 30 mm loading zone and
+its 50 mm transition are retained. The 2.45 mm half-cosine shear ramp is
+lengthened to 75 ms, reducing peak boundary velocity while leaving the fully
+explicit 40 ms normal phase and 10 ns step unchanged. The dump budget is 1.40
+TB; bulk velocity and strain remain omitted while stress, displacement,
+energies, and high-rate interface histories are retained. The configured
+83,200 bulk and 800,000 interface shear frames give a calibrated estimate of
+approximately 1.394 TB.

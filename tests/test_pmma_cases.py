@@ -45,6 +45,7 @@ TS0119_CASE = ROOT / "cases/rsf_0119_q4_explicit_10h.toml"
 TS0120_CASE = ROOT / "cases/rsf_0120_q4_fully_explicit_12h.toml"
 TS0121_CASE = ROOT / "cases/rsf_0121_q4_slow_strong_vs_12h.toml"
 TS0122_CASE = ROOT / "cases/rsf_0122_q4_slow_rsf_buffer_12h.toml"
+TS0123_CASE = ROOT / "cases/rsf_0123_q4_uniform_leading_slow_12h.toml"
 
 
 def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
@@ -392,6 +393,36 @@ def test_ts0122_uses_a_low_f0_velocity_strengthening_buffer():
     assert config.output.bulk_shear_frames == 70_759
     assert config.output.interface_shear_frames == 589_655
     assert estimate["configured_steps_estimate"] == 9_700_000
+    assert (
+        estimate["estimated_uncompressed_tb"]
+        * config.output.estimated_compression_ratio
+        < config.output.maximum_dump_tb
+    )
+
+
+def test_ts0123_removes_leading_heterogeneity_and_slows_loading():
+    config = load_case_config(TS0123_CASE)
+    estimate = estimate_case_size(config)
+    profile = build_rate_state_profile(
+        np.arange(0.0, 500.5, 0.5), make_run_config(config).rsf_profile_spec
+    )
+
+    assert config.loading.shear_phase_time == pytest.approx(0.075)
+    assert config.loading.shear_ramp_time == pytest.approx(0.075)
+    assert config.rsf.leading_length == pytest.approx(0.0)
+    assert config.rsf.transition_length == pytest.approx(50.0)
+    assert config.rsf.leading == config.rsf.middle
+    assert np.allclose(profile["reference_friction"][160:], 0.8)
+    assert np.allclose(
+        profile["direct_effect"][160:], config.rsf.middle.direct_effect
+    )
+    assert np.allclose(
+        profile["state_effect"][160:], config.rsf.middle.state_effect
+    )
+    assert config.output.maximum_dump_tb == pytest.approx(1.40)
+    assert config.output.bulk_shear_frames == 83_200
+    assert config.output.interface_shear_frames == 800_000
+    assert estimate["configured_steps_estimate"] == 11_500_000
     assert (
         estimate["estimated_uncompressed_tb"]
         * config.output.estimated_compression_ratio
