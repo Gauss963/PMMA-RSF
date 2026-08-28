@@ -15,6 +15,8 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 from matplotlib.colors import Normalize
 
+from tatva.pmma.plotting import configure_journal_style, style_axis
+
 
 DEFAULT_Y_POINTS = [0.0, 50.0, 100.0, 200.0, 400.0, 480.0, 495.0, 500.0]
 
@@ -140,9 +142,9 @@ def colored_curve(
     segments = np.stack([points[:-1], points[1:]], axis=1)
     collection = LineCollection(
         segments,
-        cmap="turbo",
+        cmap="viridis",
         norm=norm,
-        linewidth=1.7,
+        linewidth=1.15,
         alpha=0.95,
     )
     collection.set_array(0.5 * (color_value[:-1] + color_value[1:]))
@@ -154,11 +156,9 @@ def colored_curve(
 def subplot_grid_shape(station_count: int) -> tuple[int, int]:
     if station_count < 1:
         raise ValueError("At least one station is required.")
-    if station_count <= 3:
+    if station_count <= 2:
         return 1, station_count
-    columns = min(4, math.ceil(station_count / 2))
-    rows = math.ceil(station_count / columns)
-    return rows, columns
+    return math.ceil(station_count / 2), 2
 
 
 def plot_stress_slip(
@@ -172,8 +172,8 @@ def plot_stress_slip(
     normal_penalty_override: float | None,
     dpi: int,
 ) -> dict[str, object]:
+    configure_journal_style()
     run_name = data_path.parent.parent.name
-    run_id = run_name.split("_", maxsplit=1)[0]
     with h5py.File(data_path, "r") as h5:
         contact_y = np.asarray(h5["interface/contact_line_y"], dtype=np.float64)
         station_indices = nearest_station_indices(contact_y, requested_y)
@@ -270,7 +270,7 @@ def plot_stress_slip(
     figure, axes = plt.subplots(
         subplot_rows,
         subplot_columns,
-        figsize=(5.25 * subplot_columns, 4.5 * subplot_rows),
+        figsize=(3.5 * subplot_columns, 2.35 * subplot_rows),
         constrained_layout=True,
         squeeze=False,
     )
@@ -295,7 +295,7 @@ def plot_stress_slip(
             critical_slip[station],
             color="#d1495b",
             linestyle="--",
-            linewidth=1.2,
+            linewidth=0.9,
             label=r"local $D_c$",
         )
         if np.isfinite(stop_time_ms):
@@ -303,28 +303,35 @@ def plot_stress_slip(
             axis.scatter(
                 sampled_slip[stop_sample, station],
                 shear_traction[stop_sample, station],
-                s=28,
+                s=19,
                 facecolor="white",
                 edgecolor="black",
                 linewidth=0.9,
                 zorder=4,
                 label="loading stopped",
             )
+        panel = chr(ord("a") + station)
         axis.set_title(
-            f"y={resolved_y[station]:.0f} mm | "
-            f"$D_c$={critical_slip[station]:.4g} mm | "
-            f"creep w={creep_weight[station]:.2f}",
-            fontsize=11,
+            f"({panel})  $y = {resolved_y[station]:.0f}$ mm",
+            loc="left",
         )
-        axis.grid(alpha=0.22)
-        axis.tick_params(labelsize=9)
+        axis.text(
+            0.98,
+            0.95,
+            rf"$D_c = {critical_slip[station]:.3g}$ mm",
+            transform=axis.transAxes,
+            ha="right",
+            va="top",
+            fontsize=7.5,
+        )
         axis.margins(x=0.02, y=0.08)
+        style_axis(axis)
         if station % subplot_columns == 0:
             axis.set_ylabel(r"Contact shear traction $\tau$ [MPa]")
         if station // subplot_columns == subplot_rows - 1:
             axis.set_xlabel(r"Cumulative slip $\delta$ [mm]")
         if station == 0:
-            axis.legend(loc="best", fontsize=8)
+            axis.legend(loc="best")
 
         peak_index = int(np.nanargmax(shear_traction[:, station]))
         dc_indices = np.flatnonzero(
@@ -361,13 +368,8 @@ def plot_stress_slip(
         pad=0.015,
     )
     colorbar.set_label("Shear-phase time [ms]")
-    figure.suptitle(
-        f"Run {run_id} local contact stress-slip paths\n"
-        "traction reconstructed from contact relative displacement and plastic slip",
-        fontsize=16,
-    )
-    figure.savefig(png_path, dpi=dpi)
-    figure.savefig(pdf_path)
+    figure.savefig(png_path, dpi=dpi, bbox_inches="tight", pad_inches=0.04)
+    figure.savefig(pdf_path, bbox_inches="tight", pad_inches=0.04)
     plt.close(figure)
 
     return {

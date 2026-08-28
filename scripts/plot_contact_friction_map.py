@@ -11,6 +11,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
+from tatva.pmma.plotting import configure_journal_style, panel_label, style_axis
+
 
 def _cell_edges(values: np.ndarray) -> np.ndarray:
     values = np.asarray(values, dtype=np.float64)
@@ -59,6 +61,7 @@ def plot_mu_eff_maps(
     mu_k: float = 0.6,
     d_c: float = 8.0,
 ) -> dict[str, float | str]:
+    configure_journal_style()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with h5py.File(input_path, "r") as h5:
@@ -113,7 +116,7 @@ def plot_mu_eff_maps(
     normal_idx = np.where(phase_id == 1)[0]
     normal_end_idx = int(normal_idx[-1]) if normal_idx.size else None
 
-    fig, ax = plt.subplots(figsize=(10, 6), dpi=180, layout="constrained")
+    fig, ax = plt.subplots(figsize=(7.2, 4.0), dpi=180, layout="constrained")
     im = ax.pcolormesh(
         y_edges,
         time_edges,
@@ -140,14 +143,11 @@ def plot_mu_eff_maps(
 
     normal_end_min = float(mu_eff[normal_end_idx].min()) if normal_end_idx is not None else float("nan")
     final_min = float(mu_eff[-1].min())
-    ax.set_title(
-        "Contact-line effective friction coefficient\n"
-        f"law={friction_law}, normal-end min={normal_end_min:.3f}, "
-        f"final min={final_min:.3f}"
-    )
-    ax.set_xlabel("Contact-line y [mm]")
+    ax.set_title("Effective friction along the fault", loc="left")
+    ax.set_xlabel(r"Position along fault, $y$ [mm]")
     ax.set_ylabel("Time [ms]")
-    fig.savefig(output_path)
+    style_axis(ax, grid=False)
+    fig.savefig(output_path, bbox_inches="tight", pad_inches=0.04)
     plt.close(fig)
 
     normal_mask = phase_id == 1
@@ -172,7 +172,7 @@ def plot_mu_eff_maps(
         if shear_time_ms.size
         else np.array([0.0, 1.0], dtype=np.float64)
     )
-    fig = plt.figure(figsize=(10.8, 8.6), dpi=180)
+    fig = plt.figure(figsize=(7.2, 5.2), dpi=180)
     gs = GridSpec(
         2,
         2,
@@ -197,13 +197,7 @@ def plot_mu_eff_maps(
         rasterized=True,
     )
     ax_shear.set_ylabel("Shear phase time [ms]")
-    if np.any(shear_mask):
-        ax_shear.set_title(
-            "Contact-line effective friction coefficient by phase\n"
-            f"shear abs window={float(time_ms[shear_mask][0]):.3f}–{float(time_ms[shear_mask][-1]):.3f} ms"
-        )
-    else:
-        ax_shear.set_title("Contact-line effective friction coefficient by phase")
+    panel_label(ax_shear, "(a) Shear phase")
 
     normal_im = ax_normal.pcolormesh(
         y_edges,
@@ -215,23 +209,16 @@ def plot_mu_eff_maps(
         shading="auto",
         rasterized=True,
     )
-    ax_normal.set_xlabel("Contact-line y [mm]")
+    ax_normal.set_xlabel(r"Position along fault, $y$ [mm]")
     ax_normal.set_ylabel("Normal phase time [ms]")
+    panel_label(ax_normal, "(b) Normal loading")
     plt.setp(ax_shear.get_xticklabels(), visible=False)
-    if np.any(normal_mask):
-        ax_normal.text(
-            0.01,
-            1.02,
-            f"normal abs window={float(time_ms[normal_mask][0]):.3f}–{float(time_ms[normal_mask][-1]):.3f} ms",
-            transform=ax_normal.transAxes,
-            ha="left",
-            va="bottom",
-            fontsize=9,
-        )
+    style_axis(ax_shear, grid=False)
+    style_axis(ax_normal, grid=False)
 
     cbar = fig.colorbar(normal_im, cax=cax)
     cbar.set_label("Effective friction coefficient")
-    fig.savefig(phase_split_output_path, bbox_inches="tight")
+    fig.savefig(phase_split_output_path, bbox_inches="tight", pad_inches=0.04)
     plt.close(fig)
 
     return {

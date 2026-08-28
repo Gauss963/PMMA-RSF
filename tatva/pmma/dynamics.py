@@ -4464,6 +4464,18 @@ def save_history_plots(
     import matplotlib.pyplot as plt
     from matplotlib.ticker import ScalarFormatter
 
+    from .plotting import (
+        GREEN,
+        GREY,
+        JOURNAL_COLORS,
+        NAVY,
+        ORANGE,
+        configure_journal_style,
+        style_axis,
+    )
+
+    configure_journal_style()
+
     plot_dir.mkdir(parents=True, exist_ok=True)
     history = np.asarray(result["history"])
     columns = list(result["columns"])
@@ -4476,15 +4488,15 @@ def save_history_plots(
         if stop_time_ms is not None:
             axis.axvline(
                 stop_time_ms,
-                color="black",
+                color=GREY,
                 ls=":",
-                lw=1.5,
+                lw=0.9,
                 label="Loading stopped" if label else None,
             )
 
     saved: list[Path] = []
 
-    fig, ax = plt.subplots(figsize=(8, 4.5))
+    fig, ax = plt.subplots(figsize=(7.2, 3.6), layout="constrained")
     if result["summary"]["shear_loading_mode"] in {
         "displacement",
         "spring-displacement",
@@ -4493,96 +4505,137 @@ def save_history_plots(
             time_ms,
             history[:, col["applied_shear_displacement"]],
             label="Actuator shear displacement",
-            lw=2,
+            lw=1.25,
+            color=NAVY,
         )
-        ax.set_ylabel("Shear displacement")
+        ax.set_ylabel("Actuator displacement [mm]")
     else:
         ax.plot(
             time_ms,
             history[:, col["applied_shear"]],
             label="Applied shear",
-            lw=2,
+            lw=1.25,
+            color=NAVY,
         )
-        ax.set_ylabel("Applied shear")
+        ax.set_ylabel("Applied shear traction [MPa]")
     mark_loading_stop(ax, label=True)
     ax.set_xlabel("Time [ms]")
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper left")
+    style_axis(ax)
     ax2 = ax.twinx()
     ax2.plot(
         time_ms,
         history[:, col["avg_tau"]],
         label="Average interface shear",
-        lw=2,
-        color="tab:orange",
+        lw=1.15,
+        color=ORANGE,
     )
     ax2.plot(
         time_ms,
         history[:, col["avg_sigma_n"]],
         label="Average interface normal",
-        lw=2,
-        color="tab:green",
+        lw=1.15,
+        color=GREEN,
     )
-    ax2.set_ylabel("Interface traction")
+    ax2.set_ylabel("Interface traction [MPa]")
     ax2.ticklabel_format(axis="y", style="sci", scilimits=(-2, 2))
+    style_axis(ax2, grid=False, twin=True)
     lines = ax.get_lines() + ax2.get_lines()
-    ax.legend(lines, [line.get_label() for line in lines], loc="upper center")
+    fig.legend(
+        lines,
+        [line.get_label() for line in lines],
+        loc="outside upper center",
+        ncol=min(4, len(lines)),
+    )
     path = plot_dir / f"{prefix}_tractions{extension}"
-    fig.tight_layout()
-    fig.savefig(path, dpi=180)
+    fig.savefig(path, dpi=180, bbox_inches="tight", pad_inches=0.04)
     plt.close(fig)
     saved.append(path)
 
-    fig, axes = plt.subplots(2, 1, figsize=(8, 7.0), sharex=True)
-    axes[0].plot(time_ms, history[:, col["max_slip"]], label="Max cumulative slip", lw=2)
-    axes[0].plot(time_ms, history[:, col["max_penetration"]], label="Max penetration", lw=2)
-    axes[0].set_ylabel("Slip / penetration")
+    fig, axes = plt.subplots(
+        2,
+        1,
+        figsize=(7.2, 5.0),
+        sharex=True,
+        layout="constrained",
+    )
+    axes[0].plot(
+        time_ms,
+        history[:, col["max_slip"]],
+        label="Maximum cumulative slip",
+        lw=1.2,
+        color=JOURNAL_COLORS[0],
+    )
+    axes[0].plot(
+        time_ms,
+        history[:, col["max_penetration"]],
+        label="Maximum penetration",
+        lw=1.2,
+        color=JOURNAL_COLORS[1],
+    )
+    axes[0].set_ylabel("Displacement [mm]")
     axes[0].ticklabel_format(axis="y", style="sci", scilimits=(-2, 2))
-    axes[0].grid(True, alpha=0.3)
     axes[0].legend()
+    style_axis(axes[0])
     mark_loading_stop(axes[0])
     axes[1].plot(
         time_ms,
         history[:, col["mu_eff_mean"]],
         label="Mean effective friction",
-        lw=2,
-        color="tab:green",
+        lw=1.2,
+        color=GREEN,
     )
     axes[1].set_xlabel("Time [ms]")
     axes[1].set_ylabel("Effective friction")
     formatter = ScalarFormatter(useOffset=False)
     formatter.set_scientific(False)
     axes[1].yaxis.set_major_formatter(formatter)
-    axes[1].grid(True, alpha=0.3)
     axes[1].legend()
+    style_axis(axes[1])
     mark_loading_stop(axes[1])
     path = plot_dir / f"{prefix}_interface_state{extension}"
-    fig.tight_layout()
-    fig.savefig(path, dpi=180)
+    fig.savefig(path, dpi=180, bbox_inches="tight", pad_inches=0.04)
     plt.close(fig)
     saved.append(path)
 
-    fig, ax = plt.subplots(figsize=(8, 4.5))
-    ax.plot(time_ms, history[:, col["elastic_energy"]], label="Elastic energy", lw=2)
-    ax.plot(time_ms, history[:, col["interface_energy"]], label="Interface energy", lw=2)
-    ax.plot(time_ms, history[:, col["kinetic_energy"]], label="Kinetic energy", lw=2)
+    fig, ax = plt.subplots(figsize=(7.2, 3.4), layout="constrained")
+    ax.plot(
+        time_ms,
+        history[:, col["elastic_energy"]],
+        label="Elastic",
+        lw=1.15,
+        color=JOURNAL_COLORS[0],
+    )
+    ax.plot(
+        time_ms,
+        history[:, col["interface_energy"]],
+        label="Interface",
+        lw=1.15,
+        color=JOURNAL_COLORS[1],
+    )
+    ax.plot(
+        time_ms,
+        history[:, col["kinetic_energy"]],
+        label="Kinetic",
+        lw=1.15,
+        color=JOURNAL_COLORS[3],
+    )
     ax.plot(
         time_ms,
         history[:, col["elastic_energy"]]
         + history[:, col["interface_energy"]]
         + history[:, col["kinetic_energy"]],
-        label="Total tracked energy",
-        lw=2,
+        label="Total tracked",
+        lw=1.2,
         ls="--",
+        color=GREY,
     )
     ax.set_xlabel("Time [ms]")
-    ax.set_ylabel("Energy")
-    ax.grid(True, alpha=0.3)
+    ax.set_ylabel("Energy [model units]")
+    style_axis(ax)
     mark_loading_stop(ax, label=True)
     ax.legend()
     path = plot_dir / f"{prefix}_energies{extension}"
-    fig.tight_layout()
-    fig.savefig(path, dpi=180)
+    fig.savefig(path, dpi=180, bbox_inches="tight", pad_inches=0.04)
     plt.close(fig)
     saved.append(path)
 

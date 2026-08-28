@@ -14,6 +14,8 @@ import numpy as np
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from tatva.pmma.plotting import MUTED, configure_journal_style
+
 
 _CTX: dict[str, object] = {}
 
@@ -154,8 +156,8 @@ def stress_style(mode: str, stress_max: float, stress_percentile: float) -> dict
             "cmap": "RdBu_r",
             "vmin": -stress_max,
             "vmax": stress_max,
-            "colorbar_label": "sigma_xy shear stress",
-            "title": "sigma_xy",
+            "colorbar_label": r"$\sigma_{xy}$ [MPa]",
+            "title": r"$\sigma_{xy}$",
             "clip_label": f"abs(vmax)=p{stress_percentile:.1f}={stress_max:.2f}",
         }
     if mode == "sigma_yy":
@@ -163,8 +165,8 @@ def stress_style(mode: str, stress_max: float, stress_percentile: float) -> dict
             "cmap": "RdBu_r",
             "vmin": -stress_max,
             "vmax": stress_max,
-            "colorbar_label": "sigma_yy normal stress",
-            "title": "sigma_yy",
+            "colorbar_label": r"$\sigma_{yy}$ [MPa]",
+            "title": r"$\sigma_{yy}$",
             "clip_label": f"abs(vmax)=p{stress_percentile:.1f}={stress_max:.2f}",
         }
     if mode == "von_mises":
@@ -172,8 +174,8 @@ def stress_style(mode: str, stress_max: float, stress_percentile: float) -> dict
             "cmap": "magma",
             "vmin": 0.0,
             "vmax": stress_max,
-            "colorbar_label": "von Mises stress",
-            "title": "von Mises",
+            "colorbar_label": r"$\sigma_{\mathrm{VM}}$ [MPa]",
+            "title": "von Mises stress",
             "clip_label": f"vmax=p{stress_percentile:.1f}={stress_max:.2f}",
         }
     raise ValueError(f"Unsupported stress mode: {mode}")
@@ -481,6 +483,7 @@ def _init_worker(
     ylim: tuple[float, float],
     stress_mode: str,
 ) -> None:
+    configure_journal_style()
     _CTX["h5_path"] = h5_path
     _CTX["output_dir"] = output_dir
     _CTX["deform_scale"] = deform_scale
@@ -604,25 +607,36 @@ def _render_frame(frame_idx: int) -> str:
         )
         cbar = fig.colorbar(trip1, ax=ax, pad=0.02)
         cbar.set_label(str(style["colorbar_label"]))
-        ax.set_title(f"{style['title']}\n{style['clip_label']}", fontsize=10, pad=8)
+        ax.set_title(str(style["title"]), loc="left", pad=7)
+        ax.text(
+            1.0,
+            1.015,
+            str(style["clip_label"]),
+            transform=ax.transAxes,
+            ha="right",
+            va="bottom",
+            color=MUTED,
+            fontsize=7.0,
+        )
         ax.set_aspect("equal")
         if swap_axes:
-            ax.set_xlabel("y")
-            ax.set_ylabel("x")
+            ax.set_xlabel(r"$y$ [mm]")
+            ax.set_ylabel(r"$x$ [mm]")
         else:
-            ax.set_xlabel("x")
-            ax.set_ylabel("y")
+            ax.set_xlabel(r"$x$ [mm]")
+            ax.set_ylabel(r"$y$ [mm]")
         ax.set_xlim(*xlim)
         ax.set_ylim(*ylim)
         ax.grid(False)
 
     fig.suptitle(
-        "PMMA-RSF stress panels\n"
-        f"frame={frame_idx:04d}  time={time_ms:.3f} ms  "
-        f"applied_shear={applied_shear:.3f}  avg_tau={avg_tau:.4e}  "
-        f"max_slip={max_slip:.4e}  deform_scale={deform_scale:.3g}",
-        fontsize=11,
-        y=0.99,
+        rf"$t = {time_ms:.3f}$ ms   |   frame {frame_idx:05d}   |   "
+        rf"actuator = {applied_shear:.3f}   |   "
+        rf"$\langle\tau\rangle = {avg_tau:.3f}$ MPa   |   "
+        rf"$\delta_{{\max}} = {max_slip:.3e}$ mm   |   "
+        rf"deformation $\times {deform_scale:.3g}$",
+        fontsize=9.0,
+        y=0.985,
     )
 
     output_path = _frame_path(output_dir, frame_idx)

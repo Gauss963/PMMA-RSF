@@ -10,6 +10,13 @@ import numpy as np
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from tatva.pmma.plotting import (
+    GREY,
+    JOURNAL_COLORS,
+    configure_journal_style,
+    style_axis,
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -39,6 +46,7 @@ def plot_contact_mu_disp(
     selection: str = "max-final-slip",
     y_points: list[float] | None = None,
 ) -> dict[str, float | int | str]:
+    configure_journal_style()
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     def local_mu_eff(
@@ -99,13 +107,13 @@ def plot_contact_mu_disp(
 
     if y_points:
         point_indices = [int(np.argmin(np.abs(y_coords - y_val))) for y_val in y_points]
-        colors = ["#1f4e79", "#2e8b57", "#b25d00", "#8b1e3f", "#5b4db7", "#008b8b"]
-        ncols = 2
+        colors = JOURNAL_COLORS
+        ncols = min(2, len(point_indices))
         nrows = int(np.ceil(len(point_indices) / ncols))
         fig, axes = plt.subplots(
             nrows,
             ncols,
-            figsize=(13.2, 7.6 if nrows == 2 else 4.4 * nrows),
+            figsize=(7.2, 2.45 * nrows),
             dpi=180,
             constrained_layout=True,
             sharex=True,
@@ -123,34 +131,51 @@ def plot_contact_mu_disp(
             ax.plot(
                 slip,
                 mu_eff,
-                lw=2.0,
+                lw=1.25,
                 color=color,
-                label=f"y={y_coords[point_idx]:.0f} mm",
             )
             ax.scatter(
-                [slip[normal_end_idx], slip[-1]],
-                [mu_eff[normal_end_idx], mu_eff[-1]],
+                slip[normal_end_idx],
+                mu_eff[normal_end_idx],
+                facecolor="white",
+                edgecolor=color,
+                linewidth=0.9,
+                s=19,
+                zorder=3,
+            )
+            ax.scatter(
+                slip[-1],
+                mu_eff[-1],
+                marker="s",
                 color=color,
+                linewidth=0.0,
                 s=18,
                 zorder=3,
             )
             if friction_law == "slip-weakening":
-                ax.axhline(mu_s_local, color="#999999", ls="--", lw=1.0)
-                ax.axhline(mu_k_local, color="#999999", ls=":", lw=1.0)
-                ax.axvline(d_c, color="#999999", ls="-.", lw=1.0)
-            ax.set_title(
-                f"y={y_coords[point_idx]:.0f} mm | frames={n_frames}\n"
-                f"law={friction_law}, final mu={mu_eff[-1]:.4f}"
+                ax.axhline(mu_s_local, color=GREY, ls="--", lw=0.8)
+                ax.axhline(mu_k_local, color=GREY, ls=":", lw=0.8)
+                ax.axvline(d_c, color=GREY, ls="-.", lw=0.8)
+            ax.set_title(f"$y = {y_coords[point_idx]:.0f}$ mm", loc="left")
+            ax.text(
+                0.98,
+                0.95,
+                rf"$\mu_{{\rm final}} = {mu_eff[-1]:.3f}$",
+                transform=ax.transAxes,
+                ha="right",
+                va="top",
+                color=color,
+                fontsize=7.5,
             )
-            ax.grid(True, alpha=0.3)
             ax.margins(x=0.04, y=0.06)
+            style_axis(ax)
         for ax in flat_axes[len(point_indices) :]:
             ax.set_visible(False)
         for row_axes in axes_arr:
-            row_axes[0].set_ylabel("Effective friction coefficient")
+            row_axes[0].set_ylabel(r"Friction coefficient, $\mu$")
         for ax in axes_arr[-1]:
             if ax.get_visible():
-                ax.set_xlabel("Cumulative slip / relative tangential displacement")
+                ax.set_xlabel(r"Cumulative slip, $\delta$ [mm]")
         plot_kind = "multi-point"
         point_idx = point_indices[0]
         mu_s_local = float(mu_s_profile[point_idx])
@@ -164,31 +189,31 @@ def plot_contact_mu_disp(
             plt.Line2D(
                 [],
                 [],
-                color="#666666",
+                markeredgecolor=GREY,
+                markerfacecolor="white",
                 marker="o",
                 linestyle="None",
-                label="normal end / final",
-            )
+                label="End of normal loading",
+            ),
+            plt.Line2D(
+                [],
+                [],
+                color=GREY,
+                marker="s",
+                linestyle="None",
+                label="Final state",
+            ),
         ]
         if friction_law == "slip-weakening":
             legend_handles[:0] = [
-                plt.Line2D([], [], color="#999999", ls="--", lw=1.0, label="local mu_s"),
-                plt.Line2D([], [], color="#999999", ls=":", lw=1.0, label="local mu_k"),
-                plt.Line2D([], [], color="#999999", ls="-.", lw=1.0, label=f"d_c = {d_c:.3f}"),
+                plt.Line2D([], [], color=GREY, ls="--", lw=0.8, label=r"Local $\mu_s$"),
+                plt.Line2D([], [], color=GREY, ls=":", lw=0.8, label=r"Local $\mu_k$"),
+                plt.Line2D([], [], color=GREY, ls="-.", lw=0.8, label=rf"$D_c = {d_c:.3f}$ mm"),
             ]
-        fig.suptitle(
-            "Friction path at selected contact points\n"
-            f"law={friction_law}; "
-            f"using {n_frames} dumped frames from {input_path.parent.name}",
-            fontsize=13,
-        )
         fig.legend(
             handles=legend_handles,
-            loc="center left",
-            ncol=1,
-            frameon=False,
-            bbox_to_anchor=(1.01, 0.5),
-            borderaxespad=0.0,
+            loc="outside upper center",
+            ncol=min(3, len(legend_handles)),
         )
     else:
         if selection == "midpoint":
@@ -201,19 +226,19 @@ def plot_contact_mu_disp(
         mu_s_local = float(mu_s_profile[point_idx])
         mu_k_local = float(mu_k_profile[point_idx])
         mu_eff = point_mu_eff(point_idx)
-        fig, ax = plt.subplots(figsize=(7.5, 5.0), dpi=180)
+        fig, ax = plt.subplots(figsize=(3.5, 2.8), dpi=180)
         ax.plot(
             slip,
             mu_eff,
-            lw=2.2,
-            color="#1f4e79",
+            lw=1.25,
+            color=JOURNAL_COLORS[0],
             label=friction_law,
         )
         ax.scatter(
             [slip[0], slip[normal_end_idx], slip[-1]],
             [mu_eff[0], mu_eff[normal_end_idx], mu_eff[-1]],
-            color=["#666666", "#d07a00", "#b22222"],
-            s=32,
+            color=[GREY, JOURNAL_COLORS[1], JOURNAL_COLORS[3]],
+            s=20,
             zorder=3,
         )
         ax.annotate("start", (slip[0], mu_eff[0]), textcoords="offset points", xytext=(6, 6))
@@ -246,18 +271,14 @@ def plot_contact_mu_disp(
                 label=f"local mu_k = {mu_k_local:.3f}",
             )
             ax.axvline(d_c, color="#999999", ls="-.", lw=1.0, label=f"d_c = {d_c:.3f}")
-        ax.set_xlabel("Cumulative slip / relative tangential displacement")
-        ax.set_ylabel("Effective friction coefficient")
+        ax.set_xlabel(r"Cumulative slip, $\delta$ [mm]")
+        ax.set_ylabel(r"Friction coefficient, $\mu$")
         ax.margins(x=0.04, y=0.06)
-        ax.set_title(
-            "Friction path at one contact point\n"
-            f"selection={selection}, y={y_coords[point_idx]:.1f} mm, "
-            f"law={friction_law}, final slip={final_slip:.4f}, frames={n_frames}"
-        )
-        ax.grid(True, alpha=0.3)
+        ax.set_title(f"$y = {y_coords[point_idx]:.1f}$ mm", loc="left")
+        style_axis(ax)
         ax.legend()
         fig.tight_layout()
-    fig.savefig(output_path, bbox_inches="tight")
+    fig.savefig(output_path, bbox_inches="tight", pad_inches=0.04)
     plt.close(fig)
 
     return {

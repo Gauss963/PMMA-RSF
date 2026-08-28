@@ -16,8 +16,12 @@ set -euo pipefail
 
 ROOT=/work1/gauss112/PMMA-RSF
 RUN_DIR=${RUN_DIR:?Submit with --export=ALL,RUN_DIR=/path/to/TS####}
+SUBMIT_ANIMATION=${SUBMIT_ANIMATION:-0}
+ANIMATION_WORKERS=${ANIMATION_WORKERS:-56}
+ANIMATION_CHUNK_FRAMES=${ANIMATION_CHUNK_FRAMES:-3000}
 PYTHON=/home/gauss112/.conda/envs/tatva/bin/python
 RENDERER="$ROOT/scripts/render_stress_frames.py"
+ANIMATION_SCRIPT="$ROOT/slurm/PMMA-ANIMATION-CPU.slurm"
 INPUT="$RUN_DIR/data/simulation.h5"
 FRAMES_DIR="$RUN_DIR/Plot/stress_triptych_frames"
 LOG="$RUN_DIR/logs/stress-range-${SLURM_JOB_ID:-interactive}.log"
@@ -45,3 +49,24 @@ echo "Stress-range scan ${SLURM_JOB_ID:-interactive} started at $(date -u +%Y-%m
   --stress-mode stress_triptych \
   --ranges-only
 echo "Stress-range scan completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+if [[ "$SUBMIT_ANIMATION" == "1" ]]; then
+  [[ -f "$ANIMATION_SCRIPT" ]] || {
+    echo "Missing animation script: $ANIMATION_SCRIPT" >&2
+    exit 1
+  }
+  animation_job_id=$(sbatch \
+    --parsable \
+    --export=ALL,RUN_DIR="$RUN_DIR",WORKERS="$ANIMATION_WORKERS",CHUNK_FRAMES="$ANIMATION_CHUNK_FRAMES" \
+    "$ANIMATION_SCRIPT")
+  echo "Submitted animation job $animation_job_id after successful range scan."
+  mkdir -p "$RUN_DIR/stats"
+  cat > "$RUN_DIR/stats/animation_submission.json" <<EOF
+{
+  "range_job_id": "${SLURM_JOB_ID:-interactive}",
+  "animation_job_id": "$animation_job_id",
+  "workers": $ANIMATION_WORKERS,
+  "chunk_frames": $ANIMATION_CHUNK_FRAMES
+}
+EOF
+fi

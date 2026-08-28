@@ -10,8 +10,8 @@ from scripts.plot_interface_stress_slip import subplot_grid_shape
     [
         (1, (1, 1)),
         (4, (2, 2)),
-        (5, (2, 3)),
-        (8, (2, 4)),
+        (5, (3, 2)),
+        (8, (4, 2)),
     ],
 )
 def test_subplot_grid_shape_adapts_to_station_count(
