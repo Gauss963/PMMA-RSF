@@ -1,6 +1,30 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
+def rsf_fracture_energy(sigma_n: float, b: float, dc: float,
+                        V_dyn: float, V_init: float) -> float:
+    """Breakdown work of one ageing-law weakening step, in J/m^2.
+
+    The case TOMLs store rate-and-state parameters rather than a fracture
+    energy, so Gamma has to be reconstructed. Holding the slip rate at V while
+    the state relaxes leaves a strength excess
+    ``sigma_n b ln(1 + (W - 1) exp(-d/dc))`` above the steady value, with
+    ``W = theta0 V / dc``. Every node starts at the steady state of V_init, so
+    ``W`` collapses to the velocity ratio. Integrating over slip gives
+    ``-Li2(-(W - 1))``, expanded here for large argument; the neglected term is
+    O(1/W^2), which is below 1e-15 at the ratio the cases use.
+
+    Mirrors `rsf_fracture_energy` in Lc_estimate.py.
+    """
+    amplitude = V_dyn / V_init - 1.0
+    if amplitude <= 0.0:
+        raise ValueError("V_dyn must exceed V_init for a weakening step.")
+    breakdown_integral = (
+        0.5 * np.log(amplitude) ** 2 + np.pi**2 / 6 - 1.0 / amplitude
+    )
+    return sigma_n * b * dc * breakdown_integral
+
+
 def get_Cs(E: float, nu: float, rho: float) -> float:
     G = E / (2 * (1 + nu))
     Cs = np.sqrt(G / rho)

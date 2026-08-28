@@ -5,23 +5,29 @@ import FolderActions
 import CohesiveModel
 
 def main():
+    
+    mm = 1e-3
 
-    materials = FolderActions.read_materials("../Materials/material-mm-MPa.dat")
-    Gamma = materials["interface"]["parameters"]["G_c"]  * 1e3         # MPa·mm → J/m² (SI)
-    E = materials["moving-block"]["parameters"]["E"] * 1e6             # MPa → Pa
-    nu = materials["moving-block"]["parameters"]["nu"]                 # Poisson's ratio
-    rho = materials["moving-block"]["parameters"]["rho"] * 1e12        # tonne/mm³ → kg/m³
-    sigma_c = materials["interface"]["parameters"]["sigma_c"] * 1e6    # MPa → Pa
-    beta = materials["interface"]["parameters"]["beta"]                # dimensionless
-    tau_c = sigma_c * beta
+    # Newest cases/*.toml; pass a path to read_case_parameters to pin one.
+    case = FolderActions.read_case_parameters()
+    E = case["E"]                                                      # Pa
+    nu = case["nu"]                                                    # Poisson's ratio
+    rho = case["rho"]                                                  # kg/m³
 
+    # The case files carry rate-and-state parameters rather than a fracture
+    # energy, so Gamma is reconstructed from the weakening step. case["tau_c"]
+    # holds the peak strength if X_c is ever computed instead of prescribed.
+    Gamma = CohesiveModel.rsf_fracture_energy(                         # J/m²
+        case["sigma_n"], case["b"], case["dc"], case["V_dyn"], case["V_init"]
+    )
 
     C_s = CohesiveModel.get_Cs(E, nu, rho)                             # Shear wave speed (m/s)
     C_d = CohesiveModel.get_Cd(E, nu, rho)                             # Longitudinal wave speed (m/s)
-    X_c = CohesiveModel.compute_Xc_modeII_SI(E, nu, tau_c, Gamma)      # Cohesive zone size (m)
+    X_c = 5 * mm                                                       # Cohesive zone size (m)
 
     C_f = 0.9 * C_s                                                    # Rupture speed (m/s)       [To be fit with experiment data]
 
+    print(f"Case: {case['name']}  [{case['path'].name}, {case['zone']} zone]")
     print(f"Fracture energy (Gamma): {Gamma} J/m^2")
     print(f"Young's modulus (E): {E/1e9} GPa")
     print(f"Poisson's ratio (nu): {nu}")
@@ -68,8 +74,8 @@ def main():
 
     plt.suptitle(f'Stress fluctuations along the fault | E = {E/1e9:.2f}GPa | ν = {nu} | $C_f$ = {C_f:.0f}m/s, $C_s$ = {C_s:.0f}m/s, $C_d$ = {C_d:.0f}m/s', fontsize=14, fontweight='bold')
     plt.tight_layout()
-    plt.savefig('../Plot/example_xx_xy.png', dpi=900)
-    plt.savefig('../Plot/example_xx_xy.pdf', dpi=900)
+    plt.savefig('./CZM-Plot/example_xx_xy.png', dpi=900)
+    plt.savefig('./CZM-Plot/example_xx_xy.pdf', dpi=900)
     plt.show()
 
     return 0
