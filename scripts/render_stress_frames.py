@@ -75,6 +75,32 @@ def _frame_is_complete(path: Path) -> bool:
         return False
 
 
+def resolve_frame_window(
+    total_frames: int,
+    *,
+    frame_start: int = 0,
+    frame_stop: int | None = None,
+    frame_limit: int | None = None,
+) -> tuple[int, int]:
+    """Return a validated half-open frame window within the HDF5 history."""
+    total = int(total_frames)
+    start = int(frame_start)
+    stop = total if frame_stop is None else min(total, int(frame_stop))
+    if frame_limit is not None:
+        stop = min(stop, start + max(1, int(frame_limit)))
+    if total <= 0:
+        raise ValueError("The HDF5 history contains no frames.")
+    if start < 0 or start >= total:
+        raise ValueError(
+            f"frame_start must satisfy 0 <= frame_start < {total}; got {start}."
+        )
+    if stop <= start:
+        raise ValueError(
+            f"frame_stop must be greater than frame_start={start}; got {stop}."
+        )
+    return start, stop
+
+
 def von_mises_2d(stress: np.ndarray) -> np.ndarray:
     sxx = stress[..., 0, 0]
     syy = stress[..., 1, 1]
@@ -627,6 +653,8 @@ def render_all_frames(
     swap_axes: bool,
     margin: float,
     stress_mode: str,
+    frame_start: int = 0,
+    frame_stop: int | None = None,
 ) -> dict[str, object]:
     output_dir.mkdir(parents=True, exist_ok=True)
     range_cache_path = output_dir / ".stress_range_cache.npz"
@@ -640,21 +668,27 @@ def render_all_frames(
         deform_scale = 1.0 if disp_max <= 0.0 else min(5000.0, 20.0 / disp_max)
 
     with h5py.File(h5_path, "r") as h5:
-        n_frames = int(h5["history"].shape[0])
+        total_frames = int(h5["history"].shape[0])
         moving_coords = np.asarray(h5["moving/coords"], dtype=np.float32)
         stationary_coords = np.asarray(h5["stationary/coords"], dtype=np.float32)
-    if frame_limit is not None:
-        n_frames = min(n_frames, max(1, int(frame_limit)))
+    start, stop = resolve_frame_window(
+        total_frames,
+        frame_start=frame_start,
+        frame_stop=frame_stop,
+        frame_limit=frame_limit,
+    )
+    window_frames = stop - start
 
     frame_indices = [
         frame_idx
-        for frame_idx in range(n_frames)
+        for frame_idx in range(start, stop)
         if not _frame_is_complete(_frame_path(output_dir, frame_idx))
     ]
-    skipped_frames = n_frames - len(frame_indices)
+    skipped_frames = window_frames - len(frame_indices)
     if skipped_frames:
         print(
-            f"[render] resume: {skipped_frames}/{n_frames} complete frames retained; "
+            f"[render] window [{start}, {stop}): "
+            f"{skipped_frames}/{window_frames} complete frames retained; "
             f"{len(frame_indices)} remain",
             flush=True,
         )
@@ -696,14 +730,20 @@ def render_all_frames(
                 if idx % 200 == 0 or idx == len(frame_indices):
                     print(
                         f"[render] {idx}/{len(frame_indices)} remaining frames done "
-                        f"({skipped_frames + idx}/{n_frames} total)",
+                        f"({skipped_frames + idx}/{window_frames} in window)",
                         flush=True,
                     )
     else:
-        print(f"[render] all {n_frames} frames already complete", flush=True)
+        print(
+            f"[render] all {window_frames} frames in [{start}, {stop}) already complete",
+            flush=True,
+        )
 
     return {
-        "frames": float(n_frames),
+        "frames": float(window_frames),
+        "total_frames": float(total_frames),
+        "frame_start": float(start),
+        "frame_stop": float(stop),
         "frames_rendered": float(len(frame_indices)),
         "frames_reused": float(skipped_frames),
         "stress_ranges": {
@@ -730,6 +770,8 @@ def make_video(
     fps: int,
     crf: int,
     preset: str,
+    start_number: int = 0,
+    frame_count: int | None = None,
 ) -> None:
     video_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -737,6 +779,8 @@ def make_video(
         "-y",
         "-framerate",
         str(fps),
+        "-start_number",
+        str(start_number),
         "-i",
         str(frames_dir / "stress_%07d.png"),
         "-vf",
@@ -749,8 +793,12 @@ def make_video(
         preset,
         "-crf",
         str(crf),
-        str(video_path),
     ]
+    if frame_count is not None:
+        if frame_count <= 0:
+            raise ValueError(f"frame_count must be positive; got {frame_count}.")
+        cmd.extend(["-frames:v", str(frame_count)])
+    cmd.append(str(video_path))
     subprocess.run(cmd, check=True)
 
 
@@ -782,6 +830,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--crf", type=int, default=18)
     parser.add_argument("--preset", type=str, default="medium")
     parser.add_argument("--max-frames", type=int, default=None)
+    parser.add_argument("--frame-start", type=int, default=0)
+    parser.add_argument("--frame-stop", type=int, default=None)
     parser.add_argument("--stress-percentile", type=float, default=99.5)
     parser.add_argument(
         "--stress-mode",
@@ -796,6 +846,11 @@ def parse_args() -> argparse.Namespace:
         "--ranges-only",
         action="store_true",
         help="Scan every frame and checkpoint global stress ranges without rendering.",
+    )
+    parser.add_argument(
+        "--skip-video",
+        action="store_true",
+        help="Render the requested frame window without running FFmpeg.",
     )
     return parser.parse_args()
 
@@ -837,14 +892,19 @@ def main() -> int:
         swap_axes=args.swap_axes,
         margin=args.margin,
         stress_mode=args.stress_mode,
+        frame_start=args.frame_start,
+        frame_stop=args.frame_stop,
     )
-    make_video(
-        frames_dir,
-        video,
-        fps=args.fps,
-        crf=args.crf,
-        preset=args.preset,
-    )
+    if not args.skip_video:
+        make_video(
+            frames_dir,
+            video,
+            fps=args.fps,
+            crf=args.crf,
+            preset=args.preset,
+            start_number=int(stats["frame_start"]),
+            frame_count=int(stats["frames"]),
+        )
     print(
         {
             "frames_dir": str(frames_dir),

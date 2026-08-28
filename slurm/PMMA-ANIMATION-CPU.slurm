@@ -17,14 +17,16 @@ set -euo pipefail
 ROOT=/work1/gauss112/PMMA-RSF
 RUN_DIR=${RUN_DIR:?Submit with --export=ALL,RUN_DIR=/path/to/TS####}
 WORKERS=${WORKERS:-56}
+CHUNK_FRAMES=${CHUNK_FRAMES:-3000}
 PYTHON=/home/gauss112/.conda/envs/tatva/bin/python
 FFMPEG_DIR=/home/gauss112/.conda/envs/FFmpeg/bin
-RENDERER="$ROOT/scripts/render_stress_frames.py"
+RENDERER="$ROOT/scripts/render_stress_animation_chunked.py"
 INPUT="$RUN_DIR/data/simulation.h5"
 PLOT_DIR="$RUN_DIR/Plot"
 FRAMES_DIR="$PLOT_DIR/stress_triptych_frames"
 VIDEO="$PLOT_DIR/stress_triptych_60fps.mp4"
 LOG="$RUN_DIR/logs/animation-${SLURM_JOB_ID:-interactive}.log"
+SCRATCH_DIR="${TMPDIR:-/tmp}/${USER}/pmma-animation-${SLURM_JOB_ID:-interactive}"
 
 [[ -x "$PYTHON" ]] || { echo "Missing Python: $PYTHON" >&2; exit 1; }
 [[ -x "$FFMPEG_DIR/ffmpeg" ]] || { echo "Missing FFmpeg: $FFMPEG_DIR/ffmpeg" >&2; exit 1; }
@@ -47,14 +49,17 @@ export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
 echo "Animation job ${SLURM_JOB_ID:-interactive} started at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo "Host=$(hostname) CPUs=${SLURM_CPUS_PER_TASK:-unset} workers=$WORKERS"
+echo "Host=$(hostname) CPUs=${SLURM_CPUS_PER_TASK:-unset} workers=$WORKERS chunk_frames=$CHUNK_FRAMES"
 echo "Input=$INPUT"
+echo "Scratch=$SCRATCH_DIR"
 "$FFMPEG_DIR/ffmpeg" -version | head -n 1
 
 "$PYTHON" "$RENDERER" \
   --input "$INPUT" \
   --frames-dir "$FRAMES_DIR" \
   --video "$VIDEO" \
+  --scratch-dir "$SCRATCH_DIR" \
+  --chunk-frames "$CHUNK_FRAMES" \
   --workers "$WORKERS" \
   --fps 60 \
   --dpi 320 \

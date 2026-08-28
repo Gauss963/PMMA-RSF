@@ -17,9 +17,12 @@ from render_stress_frames import (  # noqa: E402
     _frame_is_complete,
     _percentile_from_histogram,
     compute_global_ranges,
+    make_video,
     render_modes,
+    resolve_frame_window,
     stress_scalar,
 )
+from render_stress_animation_chunked import chunk_ranges  # noqa: E402
 
 
 def test_frame_is_complete_checks_png_header_and_terminal_chunk(tmp_path):
@@ -34,6 +37,49 @@ def test_frame_is_complete_checks_png_header_and_terminal_chunk(tmp_path):
     assert not _frame_is_complete(truncated)
     assert not _frame_is_complete(wrong_header)
     assert not _frame_is_complete(tmp_path / "missing.png")
+
+
+def test_resolve_frame_window_bounds_and_limit():
+    assert resolve_frame_window(100) == (0, 100)
+    assert resolve_frame_window(100, frame_start=20, frame_stop=60) == (20, 60)
+    assert resolve_frame_window(
+        100,
+        frame_start=20,
+        frame_stop=90,
+        frame_limit=15,
+    ) == (20, 35)
+
+    with pytest.raises(ValueError, match="frame_start"):
+        resolve_frame_window(100, frame_start=100)
+    with pytest.raises(ValueError, match="frame_stop"):
+        resolve_frame_window(100, frame_start=20, frame_stop=20)
+
+
+def test_chunk_ranges_include_short_final_chunk():
+    assert chunk_ranges(7001, 3000) == [(0, 3000), (3000, 6000), (6000, 7001)]
+
+
+def test_make_video_limits_ffmpeg_to_requested_window(tmp_path, monkeypatch):
+    recorded: list[list[str]] = []
+
+    def fake_run(command, *, check):
+        assert check
+        recorded.append(command)
+
+    monkeypatch.setattr("render_stress_frames.subprocess.run", fake_run)
+    make_video(
+        tmp_path / "frames",
+        tmp_path / "segment.mp4",
+        fps=60,
+        crf=18,
+        preset="medium",
+        start_number=3000,
+        frame_count=125,
+    )
+
+    command = recorded[0]
+    assert command[command.index("-start_number") + 1] == "3000"
+    assert command[command.index("-frames:v") + 1] == "125"
 
 
 def test_histogram_percentile_uses_all_values_with_bin_limited_error():
