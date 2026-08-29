@@ -47,6 +47,7 @@ TS0121_CASE = ROOT / "cases/rsf_0121_q4_slow_strong_vs_12h.toml"
 TS0122_CASE = ROOT / "cases/rsf_0122_q4_slow_rsf_buffer_12h.toml"
 TS0123_CASE = ROOT / "cases/rsf_0123_q4_uniform_leading_slow_12h.toml"
 TS0124_CASE = ROOT / "cases/rsf_0124_q4_vs30_long_transition_12h.toml"
+TS0125_CASE = ROOT / "cases/rsf_0125_q4_near_vn_leading_12h.toml"
 
 
 def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
@@ -461,6 +462,50 @@ def test_ts0124_decouples_and_lengthens_only_the_leading_transition():
     assert config.rsf.leading.direct_effect - config.rsf.leading.state_effect == (
         pytest.approx(0.003)
     )
+    assert estimate["configured_steps_estimate"] == 11_500_000
+    assert (
+        estimate["estimated_uncompressed_tb"]
+        * config.output.estimated_compression_ratio
+        < config.output.maximum_dump_tb
+    )
+
+
+def test_ts0125_changes_only_the_leading_zone_to_near_velocity_neutral():
+    config = load_case_config(TS0125_CASE)
+    baseline = load_case_config(TS0124_CASE)
+    estimate = estimate_case_size(config)
+    profile = build_rate_state_profile(
+        np.arange(0.0, 500.5, 0.5), make_run_config(config).rsf_profile_spec
+    )
+
+    assert config.moving == baseline.moving
+    assert config.stationary == baseline.stationary
+    assert config.material == baseline.material
+    assert config.loading == baseline.loading
+    assert config.numerics == baseline.numerics
+    assert config.output == baseline.output
+    assert config.rsf.loading == baseline.rsf.loading
+    assert config.rsf.middle == baseline.rsf.middle
+    assert config.rsf.leading_length == baseline.rsf.leading_length
+    assert config.rsf.loading_transition_length == (
+        baseline.rsf.loading_transition_length
+    )
+    assert config.rsf.leading_transition_length == (
+        baseline.rsf.leading_transition_length
+    )
+    assert config.rsf.leading.reference_friction == pytest.approx(0.8)
+    assert config.rsf.leading.direct_effect == pytest.approx(0.006)
+    assert config.rsf.leading.state_effect == pytest.approx(0.005)
+    assert config.rsf.leading.direct_effect - config.rsf.leading.state_effect == (
+        pytest.approx(0.001)
+    )
+    assert profile["metadata"]["leading_transition_start"] == pytest.approx(
+        370.0
+    )
+    assert profile["metadata"]["leading_plateau_start"] == pytest.approx(470.0)
+    assert profile["direct_effect"][840] == pytest.approx(0.0055)
+    assert profile["direct_effect"][-1] == pytest.approx(0.006)
+    assert np.allclose(profile["reference_friction"], 0.8)
     assert estimate["configured_steps_estimate"] == 11_500_000
     assert (
         estimate["estimated_uncompressed_tb"]

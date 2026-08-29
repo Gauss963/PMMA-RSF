@@ -159,3 +159,11 @@ remains fixed at 50 mm. Separate loading and leading transition lengths avoid
 changing nucleation while testing the smoother terminal profile. Loading,
 time step, frame counts, and the 1.40 TB dump budget are unchanged from
 TS0123.
+
+TS0125 is a controlled near-velocity-neutral test of the TS0124 terminal zone.
+The geometry, loading history, 30 mm plateau, 100 mm leading transition,
+time step, frame counts, and dump budget are unchanged. Only the leading
+direct effect decreases from `a=0.008` to `a=0.006`, while `b=0.005` and
+`f0=0.8` remain fixed. The resulting `a-b=+0.001` tests whether reducing the
+terminal velocity-strengthening impedance promotes stable prestress release
+without introducing a low-strength patch.

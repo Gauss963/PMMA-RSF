@@ -17,7 +17,7 @@ set -euo pipefail
 
 ROOT=/work/gauss112/tatva
 PYTHON=/home/gauss112/.conda/envs/tatva/bin/python
-CASE_FILE=${CASE_FILE:-$ROOT/cases/rsf_0124_q4_vs30_long_transition_12h.toml}
+CASE_FILE=${CASE_FILE:-$ROOT/cases/rsf_0125_q4_near_vn_leading_12h.toml}
 RESUME_DIR=${RESUME_DIR:-}
 RUN_DIR_OVERRIDE=${RUN_DIR_OVERRIDE:-}
 RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-42000}
