@@ -23,14 +23,14 @@ Preflight a case without constructing a mesh or creating a run directory:
 
 ```bash
 python scripts/run_case.py \
-  cases/rsf_0123_q4_uniform_leading_slow_12h.toml --preflight
+  cases/rsf_0124_q4_vs30_long_transition_12h.toml --preflight
 ```
 
 Run it locally:
 
 ```bash
 python scripts/run_case.py \
-  cases/rsf_0123_q4_uniform_leading_slow_12h.toml
+  cases/rsf_0124_q4_vs30_long_transition_12h.toml
 ```
 
 Submit the default 0.50 mm Q4 explicit production case on one H200:
@@ -150,3 +150,12 @@ TB; bulk velocity and strain remain omitted while stress, displacement,
 energies, and high-rate interface histories are retained. The configured
 83,200 bulk and 800,000 interface shear frames give a calibrated estimate of
 approximately 1.394 TB.
+
+TS0124 restores a moderate terminal velocity-strengthening zone after the
+uniform TS0123 ablation increased reverse rupture. The final 30 mm plateau uses
+`f0=0.8`, `a=0.008`, and `b=0.005`. Its leading-edge half-cosine transition is
+lengthened to 100 mm, from y=370 to 470 mm, while the loading-end transition
+remains fixed at 50 mm. Separate loading and leading transition lengths avoid
+changing nucleation while testing the smoother terminal profile. Loading,
+time step, frame counts, and the 1.40 TB dump budget are unchanged from
+TS0123.

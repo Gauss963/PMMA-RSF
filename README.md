@@ -43,13 +43,13 @@ Validate mesh size, time step, frame counts, and dump budget without creating a
 run:
 
 ```bash
-python scripts/run_case.py cases/rsf_0123_q4_uniform_leading_slow_12h.toml --preflight
+python scripts/run_case.py cases/rsf_0124_q4_vs30_long_transition_12h.toml --preflight
 ```
 
 Launch locally:
 
 ```bash
-python scripts/run_case.py cases/rsf_0123_q4_uniform_leading_slow_12h.toml
+python scripts/run_case.py cases/rsf_0124_q4_vs30_long_transition_12h.toml
 ```
 
 Every new invocation atomically allocates the next label-free directory,

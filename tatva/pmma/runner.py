@@ -97,6 +97,8 @@ def rate_state_profile_spec(config: PMMACaseConfig) -> dict[str, Any]:
         "loading_length": rsf.loading_length,
         "leading_length": rsf.leading_length,
         "transition_length": rsf.transition_length,
+        "loading_transition_length": rsf.loading_transition_length,
+        "leading_transition_length": rsf.leading_transition_length,
         "loading": zone_payload(rsf.loading),
         "middle": zone_payload(rsf.middle),
         "leading": zone_payload(rsf.leading),

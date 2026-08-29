@@ -172,12 +172,22 @@ def _zone_metadata(h5: h5py.File, contact_y: np.ndarray) -> dict[str, float]:
     loading_length = float(spec.get("loading_length", 30.0))
     leading_length = float(spec.get("leading_length", 30.0))
     transition = float(spec.get("transition_length", 10.0))
+    loading_transition = float(
+        spec.get("loading_transition_length", transition)
+    )
+    leading_transition = float(
+        spec.get("leading_transition_length", transition)
+    )
     return {
         "y_min": y_min,
         "y_max": y_max,
         "loading_end": y_min + loading_length,
-        "loading_transition_end": y_min + loading_length + transition,
-        "leading_transition_start": y_max - leading_length - transition,
+        "loading_transition_end": (
+            y_min + loading_length + loading_transition
+        ),
+        "leading_transition_start": (
+            y_max - leading_length - leading_transition
+        ),
         "leading_start": y_max - leading_length,
     }
 

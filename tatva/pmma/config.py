@@ -100,6 +100,8 @@ class RSFConfig:
     loading_length: float
     leading_length: float
     transition_length: float
+    loading_transition_length: float
+    leading_transition_length: float
     loading: RSFZoneConfig
     middle: RSFZoneConfig
     leading: RSFZoneConfig
@@ -164,6 +166,7 @@ def load_case_config(path: str | Path) -> PMMACaseConfig:
     output = payload["output"]
     rsf = payload["rsf"]
 
+    transition_length = float(rsf["transition_length"])
     config = PMMACaseConfig(
         name=str(case_data["name"]),
         run_root=str(case_data.get("run_root", "runs")),
@@ -293,7 +296,13 @@ def load_case_config(path: str | Path) -> PMMACaseConfig:
             ),
             loading_length=float(rsf["loading_length"]),
             leading_length=float(rsf["leading_length"]),
-            transition_length=float(rsf["transition_length"]),
+            transition_length=transition_length,
+            loading_transition_length=float(
+                rsf.get("loading_transition_length", transition_length)
+            ),
+            leading_transition_length=float(
+                rsf.get("leading_transition_length", transition_length)
+            ),
             loading=_zone(rsf["loading"], "loading"),
             middle=_zone(rsf["middle"], "middle"),
             leading=_zone(rsf["leading"], "leading"),
@@ -401,10 +410,19 @@ def _validate(config: PMMACaseConfig) -> None:
                 "preloading is enabled."
             )
     fault_length = config.moving.dimensions[1]
+    if min(
+        config.rsf.loading_length,
+        config.rsf.leading_length,
+        config.rsf.transition_length,
+        config.rsf.loading_transition_length,
+        config.rsf.leading_transition_length,
+    ) < 0.0:
+        raise ValueError("RSF zone and transition lengths must be non-negative.")
     occupied = (
         config.rsf.loading_length
         + config.rsf.leading_length
-        + 2.0 * config.rsf.transition_length
+        + config.rsf.loading_transition_length
+        + config.rsf.leading_transition_length
     )
     if occupied >= fault_length:
         raise ValueError("RSF end zones and transitions leave no middle fault segment.")

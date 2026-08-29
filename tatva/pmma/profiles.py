@@ -118,9 +118,26 @@ def build_rate_state_profile(
     loading_length = float(specification["loading_length"])
     leading_length = float(specification["leading_length"])
     transition_length = float(specification["transition_length"])
-    if min(loading_length, leading_length, transition_length) < 0.0:
+    loading_transition_length = float(
+        specification.get("loading_transition_length", transition_length)
+    )
+    leading_transition_length = float(
+        specification.get("leading_transition_length", transition_length)
+    )
+    if min(
+        loading_length,
+        leading_length,
+        loading_transition_length,
+        leading_transition_length,
+    ) < 0.0:
         raise ValueError("RSF zone and transition lengths must be non-negative.")
-    if loading_length + leading_length + 2.0 * transition_length >= length:
+    if (
+        loading_length
+        + leading_length
+        + loading_transition_length
+        + leading_transition_length
+        >= length
+    ):
         raise ValueError("RSF end zones and transitions leave no middle segment.")
 
     initial_friction = float(specification["initial_friction"])
@@ -139,9 +156,13 @@ def build_rate_state_profile(
         "reference_friction": "f0",
     }
     loading_transition_start = y_min + loading_length
-    loading_transition_end = loading_transition_start + transition_length
+    loading_transition_end = (
+        loading_transition_start + loading_transition_length
+    )
     leading_transition_end = y_max - leading_length
-    leading_transition_start = leading_transition_end - transition_length
+    leading_transition_start = (
+        leading_transition_end - leading_transition_length
+    )
     for field_name, alias in aliases.items():
         loading_value = _zone_value(zones["loading"], field_name, alias)
         middle_value = _zone_value(zones["middle"], field_name, alias)

@@ -11,7 +11,10 @@ sys.path.insert(0, str(PLOT_DIR))
 
 from plot_contact_friction_map import plot_mu_eff_maps  # noqa: E402
 from plot_contact_mu_disp import plot_contact_mu_disp  # noqa: E402
-from plot_rsf_rupture_analysis import first_velocity_crossing  # noqa: E402
+from plot_rsf_rupture_analysis import (  # noqa: E402
+    _zone_metadata,
+    first_velocity_crossing,
+)
 
 
 def test_first_velocity_crossing_interpolates_across_chunks(tmp_path):
@@ -38,6 +41,22 @@ def test_first_velocity_crossing_interpolates_across_chunks(tmp_path):
         )
 
     assert arrivals == pytest.approx([1.5, 3.5])
+
+
+def test_zone_metadata_uses_independent_transition_lengths(tmp_path):
+    input_path = tmp_path / "zones.h5"
+    with h5py.File(input_path, "w") as h5:
+        h5.attrs["rsf_profile_spec_json"] = (
+            '{"loading_length": 30.0, "leading_length": 30.0, '
+            '"transition_length": 50.0, '
+            '"loading_transition_length": 50.0, '
+            '"leading_transition_length": 100.0}'
+        )
+        zones = _zone_metadata(h5, np.asarray([0.0, 500.0]))
+
+    assert zones["loading_transition_end"] == pytest.approx(80.0)
+    assert zones["leading_transition_start"] == pytest.approx(370.0)
+    assert zones["leading_start"] == pytest.approx(470.0)
 
 
 def test_contact_plots_use_saved_rsf_coefficient(tmp_path):
