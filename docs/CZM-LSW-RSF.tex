@@ -3,7 +3,7 @@
 % Values are produced by CohesiveZoneModel/Lc_estimate.py.
 \documentclass[11pt]{article}
 
-\usepackage[a4paper,margin=1.3cm]{geometry}
+\usepackage[a4paper, margin=1.3cm]{geometry}
 \usepackage{booktabs}
 \usepackage{array}
 \usepackage{amsmath}
@@ -13,24 +13,14 @@
 % Ragged-right paragraph column, so the fixed-width cells below do not stretch.
 \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 \newcommand{\doi}[1]{\href{https://doi.org/#1}{\scriptsize\texttt{#1}}}
+\title{From cohesive zone to slip weakening and rate and state}
 
 \begin{document}
+\maketitle
 
-\section*{From cohesive zone to slip weakening and rate and state}
+The cohesive-zone model is the anchor. It fixes the process-zone size $X_c$; the fracture energy $\Gamma$, the linear-slip-weakening (LSW) parameters and the rate-and-state (RSF) parameters all follow from it at the current friction coefficients. $D_c$ is therefore a derived quantity, and carrying an old $D_c$ across a change of $\mu_k$ silently rescales $\Gamma$.
 
-The cohesive-zone model is the anchor. It fixes the process-zone size $X_c$;
-the fracture energy $\Gamma$, the linear-slip-weakening (LSW) parameters and
-the rate-and-state (RSF) parameters all follow from it at the current friction
-coefficients. $D_c$ is therefore a derived quantity, and carrying an old $D_c$
-across a change of $\mu_k$ silently rescales $\Gamma$.
-
-Two kinds of quantity appear below and must not be confused. A \emph{slip} is a
-relative displacement across the fault, measured along the sliding direction; a
-\emph{fault length} is a distance measured along the fault plane. Both carry
-units of length, but they differ here by roughly four orders of magnitude.
-Conventions differ between sources as well: $L_c$ and $h^{*}$ are half-lengths,
-whereas $X_c$ and $L_b$ are full zone lengths. Comparing a half-length against a
-physical patch width requires the factor of two.
+Two kinds of quantity appear below and must not be confused. A \emph{slip} is a relative displacement across the fault, measured along the sliding direction; a \emph{fault length} is a distance measured along the fault plane. Both carry units of length, but they differ here by roughly four orders of magnitude. Conventions differ between sources as well: $L_c$ and $h^{*}$ are half-lengths, whereas $X_c$ and $L_b$ are full zone lengths. Comparing a half-length against a physical patch width requires the factor of two.
 
 \begin{table}[htbp]
   \centering
@@ -111,7 +101,9 @@ physical patch width requires the factor of two.
   \end{tabular}
 \end{table}
 
-\subsection*{Governing expressions}
+
+\newpage
+\section*{Governing expressions}
 
 With $\Delta\tau = (\mu_s - \mu_k)\sigma_n$ and the plane-strain combination
 $\mu^{*} = \mu/(1-\nu)$, the entries above follow from
@@ -140,7 +132,7 @@ fault against an energy balance for a slip-weakening crack --- so their close
 agreement here should be read as coincidence rather than as mutual
 confirmation.
 
-\subsection*{Rate-and-state coefficients}
+\section*{Rate-and-state coefficients}
 
 The RSF friction coefficient is
 $\mu = f_0 + a\ln(V/V^{*}) + b\ln(V^{*}\theta/D_c^{\mathrm{RSF}})$, so $a$ is
