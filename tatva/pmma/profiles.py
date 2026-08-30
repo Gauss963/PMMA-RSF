@@ -114,7 +114,13 @@ def build_rate_state_profile(
         raise ValueError("y_coordinates must be a non-empty one-dimensional array.")
     y_min = float(y.min())
     y_max = float(y.max())
-    length = y_max - y_min
+    actual_length = y_max - y_min
+    profile_length = float(specification.get("profile_length", actual_length))
+    if profile_length + 1.0e-9 < actual_length:
+        raise ValueError(
+            "RSF profile_length cannot be shorter than the supplied coordinates."
+        )
+    profile_y_max = y_min + profile_length
     loading_length = float(specification["loading_length"])
     leading_length = float(specification["leading_length"])
     transition_length = float(specification["transition_length"])
@@ -136,7 +142,7 @@ def build_rate_state_profile(
         + leading_length
         + loading_transition_length
         + leading_transition_length
-        >= length
+        >= profile_length
     ):
         raise ValueError("RSF end zones and transitions leave no middle segment.")
 
@@ -159,7 +165,7 @@ def build_rate_state_profile(
     loading_transition_end = (
         loading_transition_start + loading_transition_length
     )
-    leading_transition_end = y_max - leading_length
+    leading_transition_end = profile_y_max - leading_length
     leading_transition_start = (
         leading_transition_end - leading_transition_length
     )
@@ -198,6 +204,8 @@ def build_rate_state_profile(
     fields["metadata"] = {
         "y_min": y_min,
         "y_max": y_max,
+        "profile_y_max": profile_y_max,
+        "profile_length": profile_length,
         "loading_plateau_end": loading_transition_start,
         "loading_transition_end": loading_transition_end,
         "leading_transition_start": leading_transition_start,

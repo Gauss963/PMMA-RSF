@@ -94,6 +94,9 @@ def rate_state_profile_spec(config: PMMACaseConfig) -> dict[str, Any]:
         "reference_velocity": rsf.reference_velocity,
         "reference_state": rsf.reference_state,
         "initial_steady_velocity": rsf.initial_steady_velocity,
+        # Keep material profiles anchored to the original physical fault so a
+        # geometry-only chamfer does not translate the RSF transition.
+        "profile_length": config.moving.dimensions[1],
         "loading_length": rsf.loading_length,
         "leading_length": rsf.leading_length,
         "transition_length": rsf.transition_length,
@@ -115,6 +118,12 @@ def make_run_config(config: PMMACaseConfig) -> RunConfig:
         cfl=numerics.cfl,
         dtype=numerics.dtype,
         operator_batch_size=numerics.operator_batch_size,
+        moving_leading_chamfer_along_fault=(
+            config.moving.leading_chamfer_along_fault
+        ),
+        moving_leading_chamfer_perpendicular=(
+            config.moving.leading_chamfer_perpendicular
+        ),
         normal_penalty=numerics.normal_penalty,
         tangential_penalty=numerics.tangential_penalty,
         contact_safety_factor=numerics.contact_safety_factor,

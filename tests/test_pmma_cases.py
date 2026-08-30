@@ -10,6 +10,7 @@ from tatva.pmma.dynamics import (
     _shear_loading_stop_candidates,
     _shear_loading_stop_reached,
     build_case_model,
+    create_structured_quad_block,
     quadrature_weighted_element_average,
     run_simulation_dumped,
 )
@@ -24,6 +25,7 @@ from tatva.pmma.runner import (
     make_run_config,
     run_case,
 )
+from tatva.pmma.model import BlockSpec
 from CohesiveZoneModel.Lc_estimate import RSF_D_c, RSF_ZONES, mm
 
 
@@ -48,6 +50,7 @@ TS0122_CASE = ROOT / "cases/rsf_0122_q4_slow_rsf_buffer_12h.toml"
 TS0123_CASE = ROOT / "cases/rsf_0123_q4_uniform_leading_slow_12h.toml"
 TS0124_CASE = ROOT / "cases/rsf_0124_q4_vs30_long_transition_12h.toml"
 TS0125_CASE = ROOT / "cases/rsf_0125_q4_near_vn_leading_12h.toml"
+TS0126_CASE = ROOT / "cases/rsf_0126_q4_chamfer20x5_12h.toml"
 
 
 def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
@@ -512,6 +515,156 @@ def test_ts0125_changes_only_the_leading_zone_to_near_velocity_neutral():
         * config.output.estimated_compression_ratio
         < config.output.maximum_dump_tb
     )
+
+
+def test_chamfered_quad_mesh_preserves_q4_topology_and_truncates_contact():
+    spec = BlockSpec(
+        name="moving-block",
+        origin=(0.0, 0.0),
+        dimensions=(200.0, 500.0),
+        tag_prefix=1,
+    )
+    mesh, boundary_nodes, boundary_segments = create_structured_quad_block(
+        spec,
+        5.0,
+        np.float32,
+        leading_chamfer_along_fault=20.0,
+        leading_chamfer_perpendicular=5.0,
+    )
+    coords = np.asarray(mesh.coords)
+    elements = np.asarray(mesh.elements)
+    front = np.asarray(boundary_nodes["moving-block-front"])
+    top = np.asarray(boundary_nodes["moving-block-left"])
+
+    assert elements.shape == (4_000, 4)
+    assert boundary_segments["moving-block-front"].shape == (96, 2)
+    assert np.allclose(coords[front, 0], 200.0)
+    assert coords[front, 1].min() == pytest.approx(0.0)
+    assert coords[front, 1].max() == pytest.approx(480.0)
+    assert np.allclose(coords[top, 1], 500.0)
+    assert coords[top, 0].max() == pytest.approx(195.0)
+
+    quad_coords = coords[elements]
+    x = quad_coords[:, :, 0]
+    y = quad_coords[:, :, 1]
+    signed_area = 0.5 * np.sum(
+        x * np.roll(y, -1, axis=1) - y * np.roll(x, -1, axis=1), axis=1
+    )
+    assert np.all(signed_area > 0.0)
+
+
+def test_ts0126_changes_geometry_without_translating_the_ts0124_rsf_profile():
+    from dataclasses import replace
+
+    config = load_case_config(TS0126_CASE)
+    baseline = load_case_config(TS0124_CASE)
+    estimate = estimate_case_size(config)
+    profile = build_rate_state_profile(
+        np.arange(0.0, 480.5, 0.5), make_run_config(config).rsf_profile_spec
+    )
+    baseline_profile = build_rate_state_profile(
+        np.arange(0.0, 500.5, 0.5), make_run_config(baseline).rsf_profile_spec
+    )
+
+    assert replace(
+        config.moving,
+        leading_chamfer_along_fault=0.0,
+        leading_chamfer_perpendicular=0.0,
+    ) == baseline.moving
+    assert config.stationary == baseline.stationary
+    assert config.material == baseline.material
+    assert replace(config.loading, stop_max_y=baseline.loading.stop_max_y) == (
+        baseline.loading
+    )
+    assert config.numerics == baseline.numerics
+    assert config.output == baseline.output
+    assert config.rsf == baseline.rsf
+    assert config.moving.leading_chamfer_along_fault == pytest.approx(20.0)
+    assert config.moving.leading_chamfer_perpendicular == pytest.approx(5.0)
+    assert config.loading.stop_max_y == pytest.approx(479.0)
+    assert profile["metadata"]["y_max"] == pytest.approx(480.0)
+    assert profile["metadata"]["profile_y_max"] == pytest.approx(500.0)
+    assert profile["metadata"]["leading_transition_start"] == pytest.approx(
+        370.0
+    )
+    assert profile["metadata"]["leading_plateau_start"] == pytest.approx(470.0)
+    for field in (
+        "reference_friction",
+        "direct_effect",
+        "state_effect",
+        "characteristic_slip",
+        "initial_state",
+    ):
+        assert np.allclose(
+            profile[field], baseline_profile[field][: profile[field].size]
+        )
+    assert estimate["fault_nodes"] == 961
+    assert estimate["active_fault_length_mm"] == pytest.approx(480.0)
+    assert estimate["minimum_cell_size_mm"] == pytest.approx(0.4875)
+    assert estimate["configured_steps_estimate"] == 11_500_000
+    assert (
+        estimate["estimated_uncompressed_tb"]
+        * config.output.estimated_compression_ratio
+        < config.output.maximum_dump_tb
+    )
+
+
+def test_chamfered_regularized_dump_smoke(tmp_path):
+    from dataclasses import replace
+
+    config = load_case_config(TS0126_CASE)
+    config = replace(
+        config,
+        numerics=replace(
+            config.numerics,
+            mesh_size=20.0,
+            cfl=0.2,
+            time_step=None,
+        ),
+        loading=replace(
+            config.loading,
+            normal_phase_time=2.0e-5,
+            normal_ramp_time=1.0e-5,
+            shear_phase_time=2.0e-5,
+            shear_ramp_time=1.0e-5,
+            normal_displacement=1.0e-3,
+            shear_displacement_final=1.0e-3,
+            stop_on_rupture=False,
+        ),
+    )
+    output = tmp_path / "chamfered.h5"
+
+    result = run_simulation_dumped(
+        make_case(config),
+        make_run_config(config),
+        output,
+        frames_per_phase=2,
+        shear_frames_per_phase=3,
+        interface_frames_per_phase=4,
+        shear_interface_frames_per_phase=6,
+        include_initial_frame=False,
+        store_bulk_strain=False,
+        store_bulk_velocity=False,
+    )
+
+    assert result["summary"]["moving_leading_chamfer_along_fault"] == (
+        pytest.approx(20.0)
+    )
+    assert result["summary"]["moving_leading_chamfer_perpendicular"] == (
+        pytest.approx(5.0)
+    )
+    with h5py.File(output, "r") as h5:
+        interface_y = np.asarray(h5["interface/contact_line_y"])
+        moving_coords = np.asarray(h5["moving/coords"])
+        top = np.isclose(moving_coords[:, 1], 500.0)
+        assert h5.attrs["moving_leading_chamfer_along_fault"] == pytest.approx(
+            20.0
+        )
+        assert h5.attrs["moving_leading_chamfer_perpendicular"] == pytest.approx(
+            5.0
+        )
+        assert interface_y.max() == pytest.approx(480.0)
+        assert moving_coords[top, 0].max() == pytest.approx(195.0)
 
 
 def test_regularized_dump_can_omit_unused_bulk_fields(tmp_path):

@@ -13,6 +13,8 @@ from typing import Any
 class BlockConfig:
     origin: tuple[float, float]
     dimensions: tuple[float, float]
+    leading_chamfer_along_fault: float = 0.0
+    leading_chamfer_perpendicular: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -175,6 +177,12 @@ def load_case_config(path: str | Path) -> PMMACaseConfig:
             dimensions=_tuple2(
                 geometry["moving"]["dimensions"], "geometry.moving.dimensions"
             ),
+            leading_chamfer_along_fault=float(
+                geometry["moving"].get("leading_chamfer_along_fault", 0.0)
+            ),
+            leading_chamfer_perpendicular=float(
+                geometry["moving"].get("leading_chamfer_perpendicular", 0.0)
+            ),
         ),
         stationary=BlockConfig(
             origin=_tuple2(
@@ -313,6 +321,33 @@ def load_case_config(path: str | Path) -> PMMACaseConfig:
 
 
 def _validate(config: PMMACaseConfig) -> None:
+    for name, block in (
+        ("geometry.moving", config.moving),
+        ("geometry.stationary", config.stationary),
+    ):
+        if min(block.dimensions) <= 0.0:
+            raise ValueError(f"{name}.dimensions must be positive.")
+        chamfer_length = block.leading_chamfer_along_fault
+        chamfer_depth = block.leading_chamfer_perpendicular
+        if chamfer_length < 0.0 or chamfer_depth < 0.0:
+            raise ValueError(f"{name} leading chamfer dimensions cannot be negative.")
+        if (chamfer_length == 0.0) != (chamfer_depth == 0.0):
+            raise ValueError(
+                f"{name} leading chamfer length and depth must be enabled together."
+            )
+        if chamfer_length >= block.dimensions[1]:
+            raise ValueError(
+                f"{name}.leading_chamfer_along_fault must be shorter than the block."
+            )
+        if chamfer_depth >= block.dimensions[0]:
+            raise ValueError(
+                f"{name}.leading_chamfer_perpendicular must be narrower than the block."
+            )
+    if (
+        config.stationary.leading_chamfer_along_fault > 0.0
+        or config.stationary.leading_chamfer_perpendicular > 0.0
+    ):
+        raise ValueError("Only geometry.moving supports a leading-edge chamfer.")
     if config.numerics.mesh_size <= 0.0:
         raise ValueError("numerics.mesh_size must be positive.")
     if not 0.0 < config.numerics.cfl <= 1.0:
@@ -365,6 +400,16 @@ def _validate(config: PMMACaseConfig) -> None:
         raise ValueError("loading.stop_velocity must be positive.")
     if config.loading.stop_min_y > config.loading.stop_max_y:
         raise ValueError("loading.stop_min_y cannot exceed stop_max_y.")
+    active_fault_max_y = (
+        config.moving.origin[1]
+        + config.moving.dimensions[1]
+        - config.moving.leading_chamfer_along_fault
+    )
+    if config.loading.stop_max_y > active_fault_max_y + 1.0e-9:
+        raise ValueError(
+            "loading.stop_max_y cannot exceed the active fault endpoint after "
+            f"chamfering ({active_fault_max_y:.6g} mm)."
+        )
     if (
         config.loading.stop_coverage_fraction is not None
         and not 0.0 < config.loading.stop_coverage_fraction <= 1.0

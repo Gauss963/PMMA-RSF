@@ -167,3 +167,13 @@ direct effect decreases from `a=0.008` to `a=0.006`, while `b=0.005` and
 `f0=0.8` remain fixed. The resulting `a-b=+0.001` tests whether reducing the
 terminal velocity-strengthening impedance promotes stable prestress release
 without introducing a low-strength patch.
+
+TS0126 moves the planned geometry test ahead of the exact velocity-neutral
+test after TS0125 produced no meaningful improvement. It restores the complete
+TS0124 RSF profile and removes a 20 mm by 5 mm triangular wedge from the moving
+block's leading corner. A continuous coordinate mapping preserves the all-Q4
+topology and avoids a staircase boundary. The active contact ends at y=480 mm,
+so rupture coverage is evaluated through y=479 mm. The RSF profile remains
+anchored to the original 500 mm coordinates; all surviving fault stations
+therefore retain exactly the TS0124 `f0`, `a`, `b`, and `D_c` values. Loading,
+time step, output rates, and the 1.40 TB dump budget remain unchanged.

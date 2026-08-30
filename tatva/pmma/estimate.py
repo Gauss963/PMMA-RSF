@@ -43,6 +43,16 @@ def estimate_case_size(config: PMMACaseConfig) -> dict[str, Any]:
     moving_nodes, moving_elements, moving_min_spacing = _block_counts(
         config.moving.dimensions, mesh_size
     )
+    if config.moving.leading_chamfer_along_fault > 0.0:
+        moving_min_spacing = min(
+            moving_min_spacing,
+            mesh_size
+            * (
+                1.0
+                - config.moving.leading_chamfer_perpendicular
+                / config.moving.dimensions[0]
+            ),
+        )
     stationary_nodes, stationary_elements, stationary_min_spacing = _block_counts(
         config.stationary.dimensions, mesh_size
     )
@@ -56,9 +66,11 @@ def estimate_case_size(config: PMMACaseConfig) -> dict[str, Any]:
         config.output.interface_normal_frames
         + config.output.interface_shear_frames
     )
-    fault_cells, _ = _axis_count_and_minimum_spacing(
-        config.moving.dimensions[1], mesh_size
+    active_fault_length = (
+        config.moving.dimensions[1]
+        - config.moving.leading_chamfer_along_fault
     )
+    fault_cells, _ = _axis_count_and_minimum_spacing(active_fault_length, mesh_size)
     fault_nodes = fault_cells + 1
 
     # Per bulk frame: displacement, optional velocity, stress, and optional strain.
@@ -116,6 +128,13 @@ def estimate_case_size(config: PMMACaseConfig) -> dict[str, Any]:
         "stationary_elements": stationary_elements,
         "elements_total": elements,
         "fault_nodes": fault_nodes,
+        "active_fault_length_mm": active_fault_length,
+        "moving_leading_chamfer_along_fault_mm": (
+            config.moving.leading_chamfer_along_fault
+        ),
+        "moving_leading_chamfer_perpendicular_mm": (
+            config.moving.leading_chamfer_perpendicular
+        ),
         "bulk_frames": bulk_frames,
         "interface_frames": interface_frames,
         "bytes_per_bulk_frame": bytes_per_bulk_frame,

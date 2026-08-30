@@ -86,6 +86,8 @@ class RunConfig:
     contact_safety_factor: float = 0.25
     time_step_override: float | None = None
     operator_batch_size: int | None = None
+    moving_leading_chamfer_along_fault: float = 0.0
+    moving_leading_chamfer_perpendicular: float = 0.0
     normal_loading_mode: str = "stress"
     normal_displacement_override: float | None = None
     shear_loading_mode: str = "stress"
@@ -248,11 +250,53 @@ def create_structured_tri_block(
 
 
 def create_structured_quad_block(
-    spec: LegacyBlockSpec, mesh_size: float, dtype: jnp.dtype
+    spec: LegacyBlockSpec,
+    mesh_size: float,
+    dtype: jnp.dtype,
+    *,
+    leading_chamfer_along_fault: float = 0.0,
+    leading_chamfer_perpendicular: float = 0.0,
 ) -> tuple[Mesh, dict[str, jax.Array], dict[str, jax.Array]]:
     n00, n10, n01, n11, coords, nx, ny = _structured_2d_grid(spec, mesh_size, dtype)
     elements = jnp.stack([n00, n10, n11, n01], axis=-1)
     boundary_nodes, boundary_segments = _structured_2d_boundary(spec, nx, ny)
+    chamfer_length = float(leading_chamfer_along_fault)
+    chamfer_depth = float(leading_chamfer_perpendicular)
+    if (chamfer_length == 0.0) != (chamfer_depth == 0.0):
+        raise ValueError("Leading chamfer length and depth must be enabled together.")
+    if chamfer_length > 0.0:
+        x0, y0 = spec.origin
+        lx, ly = spec.dimensions
+        if chamfer_length >= ly or chamfer_depth >= lx:
+            raise ValueError("Leading chamfer dimensions must fit inside the block.")
+        cut_y = y0 + ly - chamfer_length
+        y_coordinates = np.asarray(coords[:, 1], dtype=np.float64)
+        if not np.any(np.isclose(y_coordinates, cut_y, atol=1.0e-9, rtol=0.0)):
+            raise ValueError(
+                "The leading chamfer start must coincide with a mesh row; "
+                "choose a chamfer length aligned with numerics.mesh_size."
+            )
+
+        # Map the logical rectangle continuously onto the chamfered polygon.
+        # Keeping the structured topology avoids staircase edges and mixed elements.
+        progress = np.clip((y_coordinates - cut_y) / chamfer_length, 0.0, 1.0)
+        scale = 1.0 - (chamfer_depth / lx) * progress
+        mapped = np.asarray(coords, dtype=np.float64).copy()
+        mapped[:, 0] = x0 + (mapped[:, 0] - x0) * scale
+        coords = jnp.asarray(mapped, dtype=dtype)
+
+        interface_name = f"{spec.name}-front"
+        full_front = np.asarray(boundary_nodes[interface_name], dtype=np.int32)
+        active_front = full_front[
+            np.asarray(coords[full_front, 1], dtype=np.float64) <= cut_y + 1.0e-9
+        ]
+        if active_front.size < 2:
+            raise ValueError("Leading chamfer leaves fewer than two interface nodes.")
+        boundary_nodes[interface_name] = jnp.asarray(active_front, dtype=jnp.int32)
+        boundary_segments[interface_name] = jnp.stack(
+            [boundary_nodes[interface_name][:-1], boundary_nodes[interface_name][1:]],
+            axis=-1,
+        )
     return Mesh(coords=coords, elements=elements), boundary_nodes, boundary_segments
 
 
@@ -391,10 +435,16 @@ def build_block_model(
     dimension: int,
     thickness: float,
     operator_batch_size: int | None = None,
+    leading_chamfer_along_fault: float = 0.0,
+    leading_chamfer_perpendicular: float = 0.0,
 ) -> BlockModel:
     if dimension == 2:
         mesh, boundary_nodes, boundary_segments = create_structured_quad_block(
-            spec, mesh_size, dtype
+            spec,
+            mesh_size,
+            dtype,
+            leading_chamfer_along_fault=leading_chamfer_along_fault,
+            leading_chamfer_perpendicular=leading_chamfer_perpendicular,
         )
         batch_size = (
             None
@@ -962,6 +1012,12 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         dimension=dimension,
         thickness=config.thickness,
         operator_batch_size=config.operator_batch_size,
+        leading_chamfer_along_fault=(
+            config.moving_leading_chamfer_along_fault
+        ),
+        leading_chamfer_perpendicular=(
+            config.moving_leading_chamfer_perpendicular
+        ),
     )
     stationary = build_block_model(
         case.stationary,
@@ -1622,6 +1678,12 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         "dtype": dtype,
         "moving": moving,
         "stationary": stationary,
+        "moving_leading_chamfer_along_fault": float(
+            config.moving_leading_chamfer_along_fault
+        ),
+        "moving_leading_chamfer_perpendicular": float(
+            config.moving_leading_chamfer_perpendicular
+        ),
         "moving_material": moving_material,
         "stationary_material": stationary_material,
         "friction": friction,
@@ -2438,6 +2500,12 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         "shear_displacement_boundary": model["shear_displacement_boundary"],
         "normal_displacement": model["normal_displacement"],
         "normal_displacement_estimate": model["normal_displacement_estimate"],
+        "moving_leading_chamfer_along_fault": model[
+            "moving_leading_chamfer_along_fault"
+        ],
+        "moving_leading_chamfer_perpendicular": model[
+            "moving_leading_chamfer_perpendicular"
+        ],
         "shear_displacement_k": model["shear_displacement_k"],
         "shear_displacement_s": model["shear_displacement_s"],
         "critical_slip": model["critical_slip"],
@@ -3680,6 +3748,12 @@ def run_simulation_dumped(
         h5.attrs["leading_edge_creep_relaxation_time"] = model[
             "leading_edge_creep_relaxation_time"
         ]
+        h5.attrs["moving_leading_chamfer_along_fault"] = model[
+            "moving_leading_chamfer_along_fault"
+        ]
+        h5.attrs["moving_leading_chamfer_perpendicular"] = model[
+            "moving_leading_chamfer_perpendicular"
+        ]
         h5.attrs["friction_law"] = model["friction_law"]
         h5.attrs["rsf_reference_friction"] = model["rsf_reference_friction"]
         h5.attrs["rsf_direct_effect"] = model["rsf_direct_effect"]
@@ -4355,6 +4429,12 @@ def run_simulation_dumped(
         "shear_displacement_boundary": model["shear_displacement_boundary"],
         "normal_displacement": model["normal_displacement"],
         "normal_displacement_estimate": model["normal_displacement_estimate"],
+        "moving_leading_chamfer_along_fault": model[
+            "moving_leading_chamfer_along_fault"
+        ],
+        "moving_leading_chamfer_perpendicular": model[
+            "moving_leading_chamfer_perpendicular"
+        ],
         "shear_displacement_k": model["shear_displacement_k"],
         "shear_displacement_s": model["shear_displacement_s"],
         "quasistatic_shear_fraction": model["quasistatic_shear_fraction"],
