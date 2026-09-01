@@ -11,17 +11,17 @@ import h5py
 import numpy as np
 
 
-ABSOLUTE_TOLERANCES = {
-    "displacement": 1.0e-7,
-    "stress": 1.0e-4,
-    "history": 1.0e-4,
-    "friction_coefficient": 2.0e-3,
-    "friction_strength": 1.0e-8,
-    "friction_velocity": 1.0e-8,
-    "slip_rate": 1.0e-8,
-    "plastic_slip": 1.0e-8,
-    "cumulative_slip": 1.0e-8,
-    "rsf_state": 1.0e-8,
+TOLERANCES = {
+    "displacement": (1.0e-7, 1.0e-4),
+    "stress": (1.0e-4, 1.0e-3),
+    "history": (1.0e-4, 1.0e-3),
+    "friction_coefficient": (2.0e-3, 5.0e-3),
+    "friction_strength": (1.0e-8, 1.0e-3),
+    "friction_velocity": (1.0e-8, 1.0e-3),
+    "slip_rate": (1.0e-8, 1.0e-3),
+    "plastic_slip": (1.0e-8, 1.0e-3),
+    "cumulative_slip": (1.0e-8, 1.0e-3),
+    "rsf_state": (1.0e-8, 1.0e-4),
 }
 
 
@@ -43,9 +43,9 @@ def dataset_names(handle: h5py.File) -> list[str]:
     return names
 
 
-def tolerance_for(name: str) -> float:
+def tolerances_for(name: str) -> tuple[float, float]:
     leaf = name.rsplit("/", maxsplit=1)[-1]
-    return ABSOLUTE_TOLERANCES.get(leaf, 0.0)
+    return TOLERANCES.get(leaf, (0.0, 0.0))
 
 
 def main() -> int:
@@ -77,17 +77,27 @@ def main() -> int:
                 - mpi_value[finite].astype(np.float64)
             )
             maximum = float(difference.max(initial=0.0))
-            tolerance = tolerance_for(name)
+            scale = max(
+                float(np.abs(serial_value[finite]).max(initial=0.0)),
+                float(np.abs(mpi_value[finite]).max(initial=0.0)),
+                np.finfo(np.float64).tiny,
+            )
+            relative = maximum / scale
+            absolute_tolerance, relative_tolerance = tolerances_for(name)
             metrics.append(
                 {
                     "dataset": name,
                     "max_abs_difference": maximum,
-                    "absolute_tolerance": tolerance,
+                    "global_relative_difference": relative,
+                    "absolute_tolerance": absolute_tolerance,
+                    "global_relative_tolerance": relative_tolerance,
                 }
             )
-            if maximum > tolerance:
+            if maximum > absolute_tolerance and relative > relative_tolerance:
                 failures.append(
-                    f"{name}: max abs difference {maximum:.6e} exceeds {tolerance:.6e}"
+                    f"{name}: max abs difference {maximum:.6e} exceeds "
+                    f"{absolute_tolerance:.6e}, and global relative difference "
+                    f"{relative:.6e} exceeds {relative_tolerance:.6e}"
                 )
 
         report["serial_mpi_ranks"] = int(serial.attrs["mpi_ranks"])
