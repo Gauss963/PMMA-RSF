@@ -33,7 +33,7 @@ def test_gb200_setup_builds_an_isolated_arm_environment():
     assert '"$system_python" -m venv "$ENV_PREFIX"' in content
     assert "Miniforge3-Linux-aarch64.sh" in content
     assert '"$(uname -m)" == "aarch64"' in content
-    assert '"jax[cuda13]"' in content
+    assert '"jax[cuda13]==0.11.0"' in content
     assert "tests/test_friction.py tests/test_pmma_cases.py" in content
     assert "estimated_uncompressed_bytes" in content
     assert 'AUTO_SUBMIT_PRODUCTION:-0' in content
