@@ -116,6 +116,22 @@ def test_storage_preflight_uses_uncompressed_remaining_size_and_reserve(
     }
 
 
+def test_storage_preflight_reads_reserve_from_environment(tmp_path, monkeypatch):
+    class Usage:
+        free = 130
+
+    monkeypatch.setattr("tatva.pmma.runner.shutil.disk_usage", lambda _: Usage())
+    monkeypatch.setenv("PMMA_MINIMUM_FREE_SPACE_RESERVE_BYTES", "30")
+
+    report = _validate_run_storage(
+        tmp_path,
+        {"estimated_uncompressed_bytes": 100},
+    )
+
+    assert report["reserve_bytes"] == 30
+    assert report["required_bytes"] == 130
+
+
 def test_standard_rsf_calibration_recovers_former_lsw_drop():
     b = calibrate_state_effect(
         initial_friction=0.8,

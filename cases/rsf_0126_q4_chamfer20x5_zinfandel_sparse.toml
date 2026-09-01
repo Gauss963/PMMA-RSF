@@ -48,17 +48,17 @@ dtype = "float32"
 operator_batch_size = 65536
 
 [output]
-# Zinfandel has a 100 GB home quota and no persistent large scratch. These
-# sparse snapshots verify a complete run; dynamics are unchanged.
-bulk_normal_frames = 2
-bulk_shear_frames = 20
+# Use the available home quota for useful rupture resolution while retaining
+# enough room for checkpoints and unrelated user files.
+bulk_normal_frames = 20
+bulk_shear_frames = 1000
 # Keep normal-phase chunks short enough for reliable wall-time checkpoints on CPU.
 interface_normal_frames = 4000
-interface_shear_frames = 20000
+interface_shear_frames = 80000
 compression = "lzf"
 estimated_compression_ratio = 0.955
 include_initial_frame = false
-maximum_dump_tb = 0.002
+maximum_dump_tb = 0.020
 checkpoint_interval_minutes = 10.0
 store_bulk_strain = false
 store_bulk_velocity = false

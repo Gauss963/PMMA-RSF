@@ -5,10 +5,9 @@
 #SBATCH --error=zinfandel-ts0126-%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=96
-#SBATCH --mem=450G
+#SBATCH --cpus-per-task=64
+#SBATCH --mem=128G
 #SBATCH --time=28-00:00:00
-#SBATCH --signal=B:USR1@600
 
 set -euo pipefail
 
@@ -46,6 +45,7 @@ export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONUNBUFFERED=1
 export JAX_ENABLE_X64=0
 export JAX_PLATFORMS=cpu
+export PMMA_MINIMUM_FREE_SPACE_RESERVE_BYTES=${PMMA_MINIMUM_FREE_SPACE_RESERVE_BYTES:-25000000000}
 export OMP_NUM_THREADS="$THREADS_PER_RANK"
 export OPENBLAS_NUM_THREADS="$THREADS_PER_RANK"
 export MKL_NUM_THREADS="$THREADS_PER_RANK"
@@ -65,6 +65,7 @@ echo "MPI ranks: $MPI_RANKS; threads per rank: $THREADS_PER_RANK"
 echo "Case: $CASE_FILE"
 echo "Run directory: $RUN_DIR"
 echo "Runner time limit: $RUN_TIME_LIMIT_SECONDS seconds"
+echo "Free-space reserve: $PMMA_MINIMUM_FREE_SPACE_RESERVE_BYTES bytes"
 free -h
 df -h "$HOME"
 
@@ -117,12 +118,6 @@ else
 fi
 simulation_pid=$!
 
-forward_checkpoint_signal() {
-  echo "Forwarding checkpoint request to simulation process $simulation_pid"
-  kill -USR1 "$simulation_pid" 2>/dev/null || true
-}
-trap forward_checkpoint_signal USR1 TERM
-
 set +e
 while true; do
   wait "$simulation_pid"
@@ -133,7 +128,6 @@ while true; do
   break
 done
 set -e
-trap - USR1 TERM
 
 if [[ "$simulation_status" -ne 0 ]]; then
   echo "Simulation exited with status $simulation_status" >&2

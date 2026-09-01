@@ -171,7 +171,17 @@ def make_run_config(config: PMMACaseConfig) -> RunConfig:
 
 RUN_SEQUENCE_PREFIX = "TS"
 FIRST_RUN_NUMBER = 117
-MINIMUM_FREE_SPACE_RESERVE_BYTES = 50_000_000_000
+DEFAULT_MINIMUM_FREE_SPACE_RESERVE_BYTES = 50_000_000_000
+
+
+def _minimum_free_space_reserve_bytes() -> int:
+    raw_value = os.environ.get("PMMA_MINIMUM_FREE_SPACE_RESERVE_BYTES")
+    if raw_value is None:
+        return DEFAULT_MINIMUM_FREE_SPACE_RESERVE_BYTES
+    reserve_bytes = int(raw_value)
+    if reserve_bytes < 0:
+        raise ValueError("PMMA_MINIMUM_FREE_SPACE_RESERVE_BYTES cannot be negative.")
+    return reserve_bytes
 
 
 def allocate_run_directory(root: Path) -> Path:
@@ -200,9 +210,11 @@ def _validate_run_storage(
     estimate: dict[str, Any],
     *,
     existing_dump_bytes: int = 0,
-    reserve_bytes: int = MINIMUM_FREE_SPACE_RESERVE_BYTES,
+    reserve_bytes: int | None = None,
 ) -> dict[str, int]:
     """Require enough free space for the conservative remaining dump size."""
+    if reserve_bytes is None:
+        reserve_bytes = _minimum_free_space_reserve_bytes()
     estimated_uncompressed_bytes = int(estimate["estimated_uncompressed_bytes"])
     remaining_dump_bytes = max(
         estimated_uncompressed_bytes - int(existing_dump_bytes), 0

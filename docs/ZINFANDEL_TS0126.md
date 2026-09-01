@@ -1,6 +1,6 @@
 # TS0126 on zinfandel
 
-This note records the reproducible CPU/MPI setup for the sparse-output TS0126
+This note records the reproducible CPU/MPI setup for the zinfandel TS0126
 completion test. The simulation physics match `rsf_0126_q4_chamfer20x5_12h.toml`;
 only output sampling is reduced to respect the 100 GB home quota.
 
@@ -9,10 +9,12 @@ only output sampling is reduced to respect the 100 GB home quota.
 - Follow the site [Slurm guidance](https://hpc.aiengineer.tw/scheduling.html).
 - Use `cpu-2g`; the 96-core node has approximately 512 GB RAM and permits a
   28-day wall time.
-- The production script reserves 450 GB and one 96-core node.
+- The production script requests 64 cores and 128 GB, leaving the remaining
+  node resources available to the scheduler.
 - `cases/rsf_0126_q4_chamfer20x5_zinfandel_sparse.toml` conservatively estimates
-  approximately 1.0 GB of output. Check `df -h "$HOME"` before submission; the
-  project runner also preserves a 50 GB free-space reserve.
+  19.906 GB uncompressed and approximately 19.010 GB after LZF compression. Check
+  `df -h "$HOME"` before submission; this zinfandel job preserves a 25 GB
+  free-space reserve.
 - Only MPI rank 0 writes persistent HDF5/checkpoint files. Other ranks write to
   node-local `/tmp` and remove those copies after a clean completion or checkpoint.
 
@@ -79,8 +81,15 @@ The production mesh/kernel scaling benchmark used the same 96-core node and
 
 Sixteen ranks are the measured optimum. Twenty-four ranks add collective
 communication without increasing useful CPU throughput. The full sparse run
-is expected to take approximately 10-12 days; the 28-day allocation leaves
+is expected to take approximately 12-14 days; the 28-day allocation leaves
 enough margin for output and checkpoint overhead.
+
+The original 96-core production trial sustained a node load of only about 64
+cores and unnecessarily made the node exclusive. A shared-node follow-up with
+16 ranks x 4 threads completed the same benchmark in 417.6 s. It is 17% slower
+than the 96-core result, but uses 33% fewer allocated cores and approximately
+22% fewer core-seconds. A 32-rank x 2-thread trial exceeded 435 s without
+finishing and was stopped. Production therefore uses 64 cores with 16 ranks.
 
 The serial and 16-rank outputs from this production-size benchmark also passed
 all 47 dataset comparisons. The maximum bulk-stress difference was
@@ -102,10 +111,16 @@ The script defaults to:
 
 - case: `cases/rsf_0126_q4_chamfer20x5_zinfandel_sparse.toml`
 - run directory: `runs-zinfandel/TS0126`
-- resources: 96 cores, 450 GB, 28 days
-- MPI layout: 16 ranks x 6 threads
-- output estimate: approximately 1.0 GB
+- resources: 64 cores, 128 GB, 28 days
+- MPI layout: 16 ranks x 4 threads
+- output estimate: 19.906 GB uncompressed, approximately 19.010 GB compressed
 - checkpoint interval: 10 minutes, evaluated at short output-chunk boundaries
+- wall-time checkpoint: the runner exits cleanly 20 minutes before Slurm time
+
+Intel MPI does not handle a broadcast `scancel --signal=USR1` cleanly. For a
+manual stop, verify that `checkpoint.npz` is recent and then use ordinary
+`scancel`; at most one 10-minute checkpoint interval is lost. The internal
+deadline provides the clean wall-time exit without an external Slurm signal.
 
 Override the MPI layout without changing the script:
 
@@ -113,7 +128,7 @@ Override the MPI layout without changing the script:
 sbatch --export=ALL,MPI_RANKS=12 slurm/PMMA-RSF-ZINFANDEL-CPU.slurm
 ```
 
-`MPI_RANKS` must divide 96. Each rank uses `96 / MPI_RANKS` CPU threads, and
+`MPI_RANKS` must divide 64. Each rank uses `64 / MPI_RANKS` CPU threads, and
 the script pins each Intel MPI rank to its OpenMP domain.
 
 Monitor the run and quota with:
