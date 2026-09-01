@@ -52,7 +52,8 @@ operator_batch_size = 65536
 # sparse snapshots verify a complete run; dynamics are unchanged.
 bulk_normal_frames = 2
 bulk_shear_frames = 20
-interface_normal_frames = 100
+# Keep normal-phase chunks short enough for reliable wall-time checkpoints on CPU.
+interface_normal_frames = 4000
 interface_shear_frames = 20000
 compression = "lzf"
 estimated_compression_ratio = 0.955
