@@ -82,9 +82,9 @@ def make_allreduced_value_and_grad(
     @jax.jit
     def allreduced(value: jax.Array) -> tuple[jax.Array, jax.Array]:
         local_value, local_grad = local_value_and_grad(value)
-        packed = jnp.concatenate((local_value.reshape(1), local_grad))
+        packed = jnp.concatenate((local_value.reshape(1), local_grad.reshape(-1)))
         reduced = mpi4jax.allreduce(packed, op=MPI.SUM, comm=comm)
-        return reduced[0], reduced[1:]
+        return reduced[0], reduced[1:].reshape(local_grad.shape)
 
     return allreduced
 

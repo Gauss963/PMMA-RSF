@@ -31,7 +31,7 @@ THREADS_PER_RANK=$((SLURM_CPUS_PER_TASK / MPI_RANKS))
 module purge
 module load mpi/2021.15
 unset CPATH CPLUS_INCLUDE_PATH C_INCLUDE_PATH
-sbatch_pre.sh
+/opt/bin/sbatch_pre.sh
 
 if [[ -n "$RESUME_DIR" ]]; then
   RUN_DIR="$RESUME_DIR"
@@ -99,7 +99,7 @@ cleanup_monitor() {
 }
 finish_job() {
   cleanup_monitor
-  sbatch_post.sh || true
+  /opt/bin/sbatch_post.sh || true
 }
 trap finish_job EXIT
 
@@ -148,5 +148,5 @@ fi
 
 cleanup_monitor
 trap - EXIT
-sbatch_post.sh
+/opt/bin/sbatch_post.sh
 echo "PMMA TS0126 CPU job finished at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
