@@ -17,17 +17,15 @@
 set -euo pipefail
 
 ROOT=/work/gauss112/tatva
-ENV_NAME=tatva-gb200
-PYTHON=/home/gauss112/.conda/envs/$ENV_NAME/bin/python
+ENV_PREFIX=/work/gauss112/.venvs/tatva-gb200
+PYTHON=$ENV_PREFIX/bin/python
 CASE_FILE=${CASE_FILE:-$ROOT/cases/rsf_0127_q4_chamfer20x5_gb200_8h.toml}
 RESUME_DIR=${RESUME_DIR:-}
 RUN_DIR_OVERRIDE=${RUN_DIR_OVERRIDE:-$ROOT/runs/TS0127}
 RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-6600}
 
 module purge
-module load miniconda3/26.1.1
-source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate "$ENV_NAME"
+export PATH="$ENV_PREFIX/bin:$PATH"
 
 [[ "$(uname -m)" == "aarch64" ]] || {
   echo "GB200 production must run on aarch64, found $(uname -m)." >&2
