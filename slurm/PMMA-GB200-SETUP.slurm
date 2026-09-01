@@ -16,12 +16,11 @@
 set -euo pipefail
 
 ROOT=/work/gauss112/tatva
-ENV_NAME=tatva-gb200
-ENV_PYTHON=/home/gauss112/.conda/envs/$ENV_NAME/bin/python
+ENV_PREFIX=/work/gauss112/.venvs/tatva-gb200
+ENV_PYTHON=$ENV_PREFIX/bin/python
+MINIFORGE_PREFIX=/work/gauss112/.miniforge3-aarch64
 
 module purge
-module load miniconda3/26.1.1
-source "$(conda info --base)/etc/profile.d/conda.sh"
 
 cd "$ROOT"
 echo "GB200 setup job ${SLURM_JOB_ID:-interactive} started at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -38,22 +37,57 @@ nvidia-smi --query-gpu=name,compute_cap,memory.total,driver_version --format=csv
 if [[ -x "$ENV_PYTHON" ]]; then
   existing_arch=$($ENV_PYTHON -c 'import platform; print(platform.machine())')
   [[ "$existing_arch" == "aarch64" ]] || {
-    echo "Existing $ENV_NAME environment has architecture $existing_arch." >&2
+    echo "Existing environment has architecture $existing_arch: $ENV_PREFIX" >&2
     exit 1
   }
-  echo "Reusing existing aarch64 environment: $ENV_NAME"
+  echo "Reusing existing aarch64 environment: $ENV_PREFIX"
 else
-  conda create -y -n "$ENV_NAME" python=3.12 pip
+  system_python=$(command -v python3 || command -v python || true)
+  use_system_python=0
+  if [[ -n "$system_python" ]]; then
+    use_system_python=$($system_python - <<'PY'
+import sys
+
+print(int(sys.version_info >= (3, 11)))
+PY
+)
+  fi
+
+  needs_miniforge=1
+  if [[ "$use_system_python" == "1" ]]; then
+    echo "Creating the ARM venv with $system_python ($($system_python --version))."
+    if "$system_python" -m venv "$ENV_PREFIX"; then
+      needs_miniforge=0
+    else
+      failed_env="$ENV_PREFIX.failed-${SLURM_JOB_ID:-manual}"
+      echo "System venv creation failed; preserving it at $failed_env." >&2
+      mv "$ENV_PREFIX" "$failed_env"
+    fi
+  fi
+
+  if [[ "$needs_miniforge" == "1" ]]; then
+    echo "A suitable system venv is unavailable; bootstrapping aarch64 Miniforge."
+    if [[ ! -x "$MINIFORGE_PREFIX/bin/python" ]]; then
+      installer="${TMPDIR:-/tmp}/Miniforge3-Linux-aarch64-${SLURM_JOB_ID:-manual}.sh"
+      curl --fail --location --retry 3 \
+        https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-aarch64.sh \
+        --output "$installer"
+      bash "$installer" -b -p "$MINIFORGE_PREFIX"
+      rm -f "$installer"
+    fi
+    "$MINIFORGE_PREFIX/bin/conda" create -y -p "$ENV_PREFIX" python=3.12 pip
+  fi
 fi
 
-conda activate "$ENV_NAME"
 unset LD_LIBRARY_PATH || true
-python -m pip install --upgrade pip
+export PATH="$ENV_PREFIX/bin:$PATH"
+export PIP_CACHE_DIR=/work/gauss112/.cache/pip-aarch64
+"$ENV_PYTHON" -m pip install --upgrade pip
 # JAX publishes CUDA 13 wheels for Linux aarch64 and recommends pip-provided
 # CUDA libraries so the environment stays independent of x86_64 modules.
-python -m pip install --upgrade "jax[cuda13]"
-python -m pip install --editable "${ROOT}[dev]"
-python -m pip check
+"$ENV_PYTHON" -m pip install --upgrade "jax[cuda13]"
+"$ENV_PYTHON" -m pip install --editable "${ROOT}[dev]"
+"$ENV_PYTHON" -m pip check
 
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 export JAX_ENABLE_X64=0
@@ -62,7 +96,7 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 export OMP_NUM_THREADS="$SLURM_CPUS_PER_TASK"
 export OPENBLAS_NUM_THREADS="$SLURM_CPUS_PER_TASK"
 
-python - <<'PY'
+"$ENV_PYTHON" - <<'PY'
 import platform
 
 import h5py
@@ -87,9 +121,9 @@ value.block_until_ready()
 print(f"JAX GB200 compile/execute smoke value={float(value):.6e}")
 PY
 
-python scripts/run_case.py \
+"$ENV_PYTHON" scripts/run_case.py \
   cases/rsf_0127_q4_chamfer20x5_gb200_8h.toml --preflight
-python - <<'PY'
+"$ENV_PYTHON" - <<'PY'
 import shutil
 from pathlib import Path
 
@@ -108,10 +142,10 @@ print(
 if free_bytes < required_bytes:
     raise SystemExit("Insufficient storage for TS0127 production dump.")
 PY
-python -m pytest -q tests/test_friction.py tests/test_pmma_cases.py
+"$ENV_PYTHON" -m pytest -q tests/test_friction.py tests/test_pmma_cases.py
 
 echo "GB200 setup and PMMA smoke tests completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-if [[ "${AUTO_SUBMIT_PRODUCTION:-1}" == "1" ]]; then
+if [[ "${AUTO_SUBMIT_PRODUCTION:-0}" == "1" ]]; then
   production_job=$(sbatch --parsable "$ROOT/slurm/PMMA-RSF-GB200.slurm")
   echo "Submitted validated TS0127 GB200 production job: $production_job"
 else
