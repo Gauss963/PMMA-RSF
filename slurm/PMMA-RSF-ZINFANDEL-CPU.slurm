@@ -28,7 +28,9 @@ THREADS_PER_RANK=$((SLURM_CPUS_PER_TASK / MPI_RANKS))
 
 [[ -x "$PYTHON" ]] || { echo "Missing Python: $PYTHON" >&2; exit 1; }
 
-module load opt mpi/latest
+module purge
+module load mpi/2021.15
+unset CPATH CPLUS_INCLUDE_PATH C_INCLUDE_PATH
 sbatch_pre.sh
 
 if [[ -n "$RESUME_DIR" ]]; then
