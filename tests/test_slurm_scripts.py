@@ -30,6 +30,9 @@ def test_gb200_setup_builds_an_isolated_arm_environment():
     assert '"$(uname -m)" == "aarch64"' in content
     assert '"jax[cuda13]"' in content
     assert "tests/test_friction.py tests/test_pmma_cases.py" in content
+    assert "estimated_uncompressed_bytes" in content
+    assert 'AUTO_SUBMIT_PRODUCTION:-1' in content
+    assert 'sbatch --parsable "$ROOT/slurm/PMMA-RSF-GB200.slurm"' in content
 
 
 def test_gb200_production_uses_one_gpu_for_eight_hours():

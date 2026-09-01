@@ -8,7 +8,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
-#SBATCH --time=02:00:00
+#SBATCH --time=01:00:00
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=b09501028@ntu.edu.tw
 
@@ -88,6 +88,31 @@ PY
 
 python scripts/run_case.py \
   cases/rsf_0127_q4_chamfer20x5_gb200_8h.toml --preflight
+python - <<'PY'
+import shutil
+from pathlib import Path
+
+from tatva.pmma.config import load_case_config
+from tatva.pmma.runner import preflight
+
+root = Path("/work/gauss112/tatva")
+case = load_case_config(root / "cases/rsf_0127_q4_chamfer20x5_gb200_8h.toml")
+estimate = preflight(case)
+free_bytes = shutil.disk_usage(root).free
+required_bytes = estimate["estimated_uncompressed_bytes"] + 50_000_000_000
+print(
+    f"Storage gate: free={free_bytes / 1e12:.3f} TB; "
+    f"required={required_bytes / 1e12:.3f} TB"
+)
+if free_bytes < required_bytes:
+    raise SystemExit("Insufficient storage for TS0127 production dump.")
+PY
 python -m pytest -q tests/test_friction.py tests/test_pmma_cases.py
 
 echo "GB200 setup and PMMA smoke tests completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+if [[ "${AUTO_SUBMIT_PRODUCTION:-1}" == "1" ]]; then
+  production_job=$(sbatch --parsable "$ROOT/slurm/PMMA-RSF-GB200.slurm")
+  echo "Submitted validated TS0127 GB200 production job: $production_job"
+else
+  echo "AUTO_SUBMIT_PRODUCTION is disabled; production job was not submitted."
+fi
