@@ -11,11 +11,16 @@ MEMORY_DIRECTIVE = re.compile(
 
 def test_non_gb200_slurm_scripts_leave_memory_allocation_to_scheduler():
     scripts = sorted((ROOT / "slurm").glob("*.slurm"))
-    gb200_scripts = {"PMMA-GB200-SETUP.slurm", "PMMA-RSF-GB200.slurm"}
+    explicit_memory_scripts = {
+        "PMMA-GB200-SETUP.slurm",
+        "PMMA-RSF-GB200.slurm",
+        # Zinfandel's 96-core node has 512 GB; reserve 450 GB for replicated MPI state.
+        "PMMA-RSF-ZINFANDEL-CPU.slurm",
+    }
 
     assert scripts
     for script in scripts:
-        if script.name in gb200_scripts:
+        if script.name in explicit_memory_scripts:
             continue
         content = script.read_text(encoding="utf-8")
         assert not MEMORY_DIRECTIVE.search(content), (

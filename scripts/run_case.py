@@ -14,6 +14,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from tatva.pmma.config import load_case_config
+from tatva.pmma.mpi import get_mpi_context
 from tatva.pmma.runner import allocate_run_directory, preflight, run_case
 
 
@@ -53,11 +54,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    mpi_context = get_mpi_context()
     source = args.input.expanduser().resolve()
     config = load_case_config(source)
     estimate = preflight(config)
     if args.preflight:
-        print(json.dumps(estimate, indent=2))
+        if mpi_context.is_root:
+            print(json.dumps(estimate, indent=2))
         return 0 if estimate["within_dump_limit"] else 2
     default_root = REPO_ROOT / config.run_root
     run_root = (args.run_root or default_root).expanduser().resolve()
@@ -76,8 +79,13 @@ def main() -> int:
         resume=args.resume,
         time_limit_seconds=args.time_limit_seconds,
     )
-    status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
-    print(json.dumps({"run_dir": str(run_dir), "status": status["status"]}, indent=2))
+    if mpi_context.is_root:
+        status = json.loads((run_dir / "status.json").read_text(encoding="utf-8"))
+        print(
+            json.dumps(
+                {"run_dir": str(run_dir), "status": status["status"]}, indent=2
+            )
+        )
     return 0
 
 

@@ -18,8 +18,18 @@ CASE_FILE=${CASE_FILE:-$ROOT/cases/rsf_0126_q4_chamfer20x5_zinfandel_sparse.toml
 RUN_DIR_OVERRIDE=${RUN_DIR_OVERRIDE:-$ROOT/runs-zinfandel/TS0126}
 RESUME_DIR=${RESUME_DIR:-}
 RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-2418000}
+MPI_RANKS=${MPI_RANKS:-24}
+
+if (( MPI_RANKS < 1 || SLURM_CPUS_PER_TASK % MPI_RANKS != 0 )); then
+  echo "MPI_RANKS must divide SLURM_CPUS_PER_TASK exactly." >&2
+  exit 1
+fi
+THREADS_PER_RANK=$((SLURM_CPUS_PER_TASK / MPI_RANKS))
 
 [[ -x "$PYTHON" ]] || { echo "Missing Python: $PYTHON" >&2; exit 1; }
+
+module load opt mpi/latest
+sbatch_pre.sh
 
 if [[ -n "$RESUME_DIR" ]]; then
   RUN_DIR="$RESUME_DIR"
@@ -34,10 +44,14 @@ export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONUNBUFFERED=1
 export JAX_ENABLE_X64=0
 export JAX_PLATFORMS=cpu
-export OMP_NUM_THREADS="$SLURM_CPUS_PER_TASK"
-export OPENBLAS_NUM_THREADS="$SLURM_CPUS_PER_TASK"
-export MKL_NUM_THREADS="$SLURM_CPUS_PER_TASK"
-export NUMEXPR_NUM_THREADS="$SLURM_CPUS_PER_TASK"
+export OMP_NUM_THREADS="$THREADS_PER_RANK"
+export OPENBLAS_NUM_THREADS="$THREADS_PER_RANK"
+export MKL_NUM_THREADS="$THREADS_PER_RANK"
+export NUMEXPR_NUM_THREADS="$THREADS_PER_RANK"
+export XLA_FLAGS="${XLA_FLAGS:-} --xla_cpu_multi_thread_eigen=true intra_op_parallelism_threads=$THREADS_PER_RANK"
+export I_MPI_FABRICS=shm
+export I_MPI_PIN=1
+export I_MPI_PIN_DOMAIN=omp
 
 mkdir -p "$LOG_DIR"
 exec > >(tee -a "$LOG_DIR/job.log") 2>&1
@@ -45,6 +59,7 @@ exec > >(tee -a "$LOG_DIR/job.log") 2>&1
 cd "$ROOT"
 echo "PMMA TS0126 CPU job ${SLURM_JOB_ID:-interactive} started at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "Host: $(hostname); CPUs: ${SLURM_CPUS_PER_TASK:-unset}"
+echo "MPI ranks: $MPI_RANKS; threads per rank: $THREADS_PER_RANK"
 echo "Case: $CASE_FILE"
 echo "Run directory: $RUN_DIR"
 echo "Runner time limit: $RUN_TIME_LIMIT_SECONDS seconds"
@@ -65,19 +80,39 @@ if len(devices) != 1 or devices[0].platform != "cpu":
     raise SystemExit(f"Expected exactly one CPU device, found {devices}.")
 PY
 
+if (( MPI_RANKS > 1 )); then
+  "$PYTHON" - <<'PY'
+import mpi4jax
+import mpi4py
+
+print(f"mpi4py={mpi4py.__version__}; mpi4jax={mpi4jax.__version__}")
+PY
+fi
+
 vmstat 10 > "$LOG_DIR/vmstat.log" &
 monitor_pid=$!
 cleanup_monitor() {
   kill "$monitor_pid" 2>/dev/null || true
   wait "$monitor_pid" 2>/dev/null || true
 }
-trap cleanup_monitor EXIT
+finish_job() {
+  cleanup_monitor
+  sbatch_post.sh || true
+}
+trap finish_job EXIT
 
 "$PYTHON" scripts/run_case.py "$CASE_FILE" --preflight
-"$PYTHON" scripts/run_case.py "$CASE_FILE" \
-  --run-dir "$RUN_DIR" \
-  --time-limit-seconds "$RUN_TIME_LIMIT_SECONDS" \
-  "${RESUME_ARGS[@]}" &
+runner=(
+  "$PYTHON" scripts/run_case.py "$CASE_FILE"
+  --run-dir "$RUN_DIR"
+  --time-limit-seconds "$RUN_TIME_LIMIT_SECONDS"
+  "${RESUME_ARGS[@]}"
+)
+if (( MPI_RANKS > 1 )); then
+  mpirun -n "$MPI_RANKS" -ppn "$MPI_RANKS" "${runner[@]}" &
+else
+  "${runner[@]}" &
+fi
 simulation_pid=$!
 
 forward_checkpoint_signal() {
@@ -111,4 +146,5 @@ fi
 
 cleanup_monitor
 trap - EXIT
+sbatch_post.sh
 echo "PMMA TS0126 CPU job finished at $(date -u +%Y-%m-%dT%H:%M:%SZ)"

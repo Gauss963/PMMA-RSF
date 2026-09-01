@@ -27,6 +27,7 @@ from tatva.pmma.model import (
     Material,
     PMMAModelInput,
 )
+from tatva.pmma.mpi import get_mpi_context
 from tatva.pmma.profiles import regularized_steady_friction
 
 
@@ -283,6 +284,7 @@ def run_case(
     resume: bool = False,
     time_limit_seconds: float | None = None,
 ) -> Path:
+    mpi_context = get_mpi_context()
     estimate = preflight(config)
     if not estimate["within_dump_limit"]:
         raise ValueError(
@@ -297,30 +299,32 @@ def run_case(
         raise ValueError("time_limit_seconds must be positive.")
 
     run_root = run_root.expanduser().resolve()
-    if run_dir is None:
-        run_root.mkdir(parents=True, exist_ok=True)
-        storage = _validate_run_storage(run_root, estimate)
-        run_dir = allocate_run_directory(run_root)
-    else:
-        run_dir = run_dir.expanduser().resolve()
+
+    def prepare_public_run_directory() -> tuple[Path, dict[str, int]]:
+        if run_dir is None:
+            run_root.mkdir(parents=True, exist_ok=True)
+            storage_report = _validate_run_storage(run_root, estimate)
+            return allocate_run_directory(run_root), storage_report
+
+        public_dir = run_dir.expanduser().resolve()
         if resume:
-            if not run_dir.is_dir():
-                raise FileNotFoundError(f"Run directory not found: {run_dir}")
+            if not public_dir.is_dir():
+                raise FileNotFoundError(f"Run directory not found: {public_dir}")
         else:
-            run_dir.mkdir(parents=True, exist_ok=True)
+            public_dir.mkdir(parents=True, exist_ok=True)
             conflicting = [
                 path
                 for name in ("input", "data", "stats", "status.json")
-                if (path := run_dir / name).exists()
+                if (path := public_dir / name).exists()
             ]
             if conflicting:
                 raise FileExistsError(
                     "The requested run directory already contains simulation data: "
                     + ", ".join(str(path) for path in conflicting)
                 )
-        existing_dump = run_dir / "data" / "simulation.h5"
-        storage = _validate_run_storage(
-            run_dir,
+        existing_dump = public_dir / "data" / "simulation.h5"
+        storage_report = _validate_run_storage(
+            public_dir,
             estimate,
             existing_dump_bytes=(
                 existing_dump.stat().st_size
@@ -328,7 +332,52 @@ def run_case(
                 else 0
             ),
         )
+        return public_dir, storage_report
+
+    if mpi_context.is_root:
+        public_run_dir, storage = prepare_public_run_directory()
+        public_payload = (str(public_run_dir), storage)
+    else:
+        public_run_dir = Path()
+        storage = {}
+        public_payload = None
+    if mpi_context.enabled:
+        public_path, storage = mpi_context.comm.bcast(public_payload, root=0)
+        public_run_dir = Path(public_path)
+
+    if mpi_context.enabled and not mpi_context.is_root:
+        job_id = os.environ.get("SLURM_JOB_ID", f"pid-{os.getppid()}")
+        temporary_root = Path(
+            os.environ.get("SLURM_TMPDIR", os.environ.get("TMPDIR", "/tmp"))
+        )
+        run_dir = temporary_root / f"pmma-rsf-{job_id}" / f"rank-{mpi_context.rank}"
+        if run_dir.exists():
+            shutil.rmtree(run_dir)
+        run_dir.mkdir(parents=True)
+        if resume:
+            for name in ("input", "data", "stats"):
+                source = public_run_dir / name
+                if source.exists():
+                    shutil.copytree(source, run_dir / name)
+            for name in ("status.json", "checkpoint.npz"):
+                source = public_run_dir / name
+                if source.exists():
+                    shutil.copy2(source, run_dir / name)
+        existing_dump = run_dir / "data" / "simulation.h5"
+        _validate_run_storage(
+            run_dir,
+            estimate,
+            existing_dump_bytes=(
+                existing_dump.stat().st_size
+                if resume and existing_dump.exists()
+                else 0
+            ),
+            reserve_bytes=0,
+        )
+    else:
+        run_dir = public_run_dir
     estimate["storage_preflight"] = storage
+    estimate["mpi_ranks"] = mpi_context.size
     data_dir = run_dir / "data"
     stats_dir = run_dir / "stats"
     input_dir = run_dir / "input"
@@ -369,6 +418,8 @@ def run_case(
         "animation": "disabled by PMMA HPC runner",
         "resume_count": int(previous_status.get("resume_count", 0)) + int(resume),
         "time_limit_seconds": time_limit_seconds,
+        "mpi_rank": mpi_context.rank,
+        "mpi_ranks": mpi_context.size,
     }
     status_path.write_text(json.dumps(status, indent=2), encoding="utf-8")
 
@@ -426,4 +477,12 @@ def run_case(
         raise
     finally:
         status_path.write_text(json.dumps(status, indent=2), encoding="utf-8")
-    return run_dir
+    if mpi_context.enabled:
+        mpi_context.comm.Barrier()
+    if (
+        mpi_context.enabled
+        and not mpi_context.is_root
+        and status["status"] in {"complete", "checkpointed"}
+    ):
+        shutil.rmtree(run_dir)
+    return public_run_dir

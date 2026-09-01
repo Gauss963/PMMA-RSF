@@ -22,6 +22,12 @@ from tatva.friction import (
     velocity_weakening_strengthening_coefficient,
 )
 from tatva.pmma.profiles import build_rate_state_profile
+from tatva.pmma.mpi import (
+    get_mpi_context,
+    make_allreduced_value_and_grad,
+    partition_operator,
+    synchronize_flags,
+)
 from tatva.pmma.model import (
     BlockSpec as LegacyBlockSpec,
     FrictionReference as LegacyFriction,
@@ -2642,6 +2648,7 @@ def run_simulation_dumped(
             signal.signal(signum, handler)
 
     model = build_case_model(case, config)
+    mpi_context = get_mpi_context()
 
     dtype = model["dtype"]
     moving = model["moving"]
@@ -2783,17 +2790,28 @@ def run_simulation_dumped(
 
     moving_integration_weights = moving.operator.get_integration_weights()
     stationary_integration_weights = stationary.operator.get_integration_weights()
+    moving_energy_operator = moving.operator
+    stationary_energy_operator = stationary.operator
+    if mpi_context.enabled:
+        moving_energy_operator = partition_operator(
+            moving.operator, mpi_context.rank, mpi_context.size
+        )
+        stationary_energy_operator = partition_operator(
+            stationary.operator, mpi_context.rank, mpi_context.size
+        )
 
     def elastic_energy_total(u_flat: jax.Array) -> jax.Array:
         u_moving, u_stationary = split_u(u_flat)
-        eps_moving = compute_strain(moving.operator.grad(u_moving))
-        eps_stationary = compute_strain(stationary.operator.grad(u_stationary))
-        return moving.operator.integrate(
+        eps_moving = compute_strain(moving_energy_operator.grad(u_moving))
+        eps_stationary = compute_strain(
+            stationary_energy_operator.grad(u_stationary)
+        )
+        return moving_energy_operator.integrate(
             moving_material.mu * jnp.einsum("...ij,...ij->...", eps_moving, eps_moving)
             + 0.5
             * moving_material.lmbda
             * jnp.trace(eps_moving, axis1=-2, axis2=-1) ** 2
-        ) + stationary.operator.integrate(
+        ) + stationary_energy_operator.integrate(
             stationary_material.mu
             * jnp.einsum("...ij,...ij->...", eps_stationary, eps_stationary)
             + 0.5
@@ -2801,7 +2819,9 @@ def run_simulation_dumped(
             * jnp.trace(eps_stationary, axis1=-2, axis2=-1) ** 2
         )
 
-    elastic_energy_and_force = jax.jit(jax.value_and_grad(elastic_energy_total))
+    elastic_energy_and_force = make_allreduced_value_and_grad(
+        elastic_energy_total, mpi_context
+    )
 
     total_interface_length = jnp.sum(interface_weights)
     moving_iface_x = dimension * master_nodes
@@ -3657,6 +3677,8 @@ def run_simulation_dumped(
     last_checkpoint_time = time.monotonic()
     with h5py.File(data_path, "r+" if resume else "w") as h5:
         h5.attrs["backend"] = jax.default_backend()
+        h5.attrs["mpi_ranks"] = mpi_context.size
+        h5.attrs["mpi_element_partition"] = int(mpi_context.enabled)
         h5.attrs["cfl"] = model["cfl"]
         h5.attrs["contact_safety_factor"] = model["contact_safety_factor"]
         if model["time_step_override"] is not None:
@@ -4208,6 +4230,14 @@ def run_simulation_dumped(
                 deadline_reached = (
                     checkpoint_deadline_monotonic is not None
                     and now >= checkpoint_deadline_monotonic
+                )
+                interval_due, deadline_reached, checkpoint_requested["value"] = (
+                    synchronize_flags(
+                        mpi_context,
+                        interval_due,
+                        deadline_reached,
+                        checkpoint_requested["value"],
+                    )
                 )
                 phase_complete = stop == int(simulation_stops[-1])
                 if phase_complete and phase_id == 1 and normal_relaxation:
