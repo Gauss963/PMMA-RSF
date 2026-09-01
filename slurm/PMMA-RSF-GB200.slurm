@@ -1,15 +1,15 @@
 #!/bin/bash
 #SBATCH --account=MST113389
-#SBATCH --partition=gb200-r1
-#SBATCH --job-name=PMMA-GB200
-#SBATCH --output=gb200-job-%j.out
-#SBATCH --error=gb200-job-%j.err
+#SBATCH --partition=gb200-dev
+#SBATCH --job-name=PMMA-GB200-DEV
+#SBATCH --output=gb200-dev-%j.out
+#SBATCH --error=gb200-dev-%j.err
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=12
 #SBATCH --gres=gpu:1
 #SBATCH --mem=200G
-#SBATCH --time=08:00:00
+#SBATCH --time=02:00:00
 #SBATCH --signal=B:USR1@600
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=b09501028@ntu.edu.tw
@@ -22,7 +22,7 @@ PYTHON=/home/gauss112/.conda/envs/$ENV_NAME/bin/python
 CASE_FILE=${CASE_FILE:-$ROOT/cases/rsf_0127_q4_chamfer20x5_gb200_8h.toml}
 RESUME_DIR=${RESUME_DIR:-}
 RUN_DIR_OVERRIDE=${RUN_DIR_OVERRIDE:-$ROOT/runs/TS0127}
-RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-27600}
+RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-6600}
 
 module purge
 module load miniconda3/26.1.1

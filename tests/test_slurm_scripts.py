@@ -39,15 +39,15 @@ def test_gb200_setup_builds_an_isolated_arm_environment():
     assert 'sbatch --parsable "$ROOT/slurm/PMMA-RSF-GB200.slurm"' in content
 
 
-def test_gb200_production_uses_one_gpu_for_eight_hours():
+def test_gb200_development_pilot_uses_one_gpu_for_two_hours():
     content = (ROOT / "slurm/PMMA-RSF-GB200.slurm").read_text(encoding="utf-8")
 
-    assert "#SBATCH --partition=gb200-r1" in content
+    assert "#SBATCH --partition=gb200-dev" in content
     assert "#SBATCH --nodes=1" in content
     assert "#SBATCH --gres=gpu:1" in content
     assert "#SBATCH --mem=200G" in content
-    assert "#SBATCH --time=08:00:00" in content
-    assert "RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-27600}" in content
+    assert "#SBATCH --time=02:00:00" in content
+    assert "RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-6600}" in content
     assert "RUN_DIR_OVERRIDE=${RUN_DIR_OVERRIDE:-$ROOT/runs/TS0127}" in content
     assert 'flock -n 9' in content
     assert "rsf_0127_q4_chamfer20x5_gb200_8h.toml" in content
