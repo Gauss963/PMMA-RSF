@@ -426,6 +426,7 @@ def run_case(
     deadline = (
         None if time_limit_seconds is None else time.monotonic() + time_limit_seconds
     )
+    runner_started_monotonic = time.monotonic()
     try:
         result = run_simulation_dumped(
             make_case(config),
@@ -476,6 +477,9 @@ def run_case(
         (run_dir / "traceback.txt").write_text(traceback.format_exc(), encoding="utf-8")
         raise
     finally:
+        status["runner_elapsed_seconds"] = (
+            time.monotonic() - runner_started_monotonic
+        )
         status_path.write_text(json.dumps(status, indent=2), encoding="utf-8")
     if mpi_context.enabled:
         mpi_context.comm.Barrier()

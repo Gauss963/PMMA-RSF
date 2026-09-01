@@ -2624,6 +2624,7 @@ def run_simulation_dumped(
 ) -> dict[str, Any]:
     import h5py
 
+    simulation_started_monotonic = time.monotonic()
     checkpoint_path = (
         None if checkpoint_path is None else checkpoint_path.expanduser().resolve()
     )
@@ -4125,6 +4126,16 @@ def run_simulation_dumped(
             h5.flush()
             last_checkpoint_time = time.monotonic()
 
+        progress_started = time.monotonic()
+        progress_last_time = progress_started
+        progress_last_step = (
+            resume_step_id
+            if resume_phase_id == 1
+            else model["pressure_steps"] + resume_step_id
+            if resume_phase_id == 2
+            else 0
+        )
+        progress_initial_step = progress_last_step
         phases = [
             (
                 1,
@@ -4223,6 +4234,29 @@ def run_simulation_dumped(
                     frame_count += 1
                 prev_stop = stop
                 now = time.monotonic()
+                absolute_progress_step = (
+                    stop if phase_id == 1 else model["pressure_steps"] + stop
+                )
+                progress_elapsed = now - progress_last_time
+                if mpi_context.is_root and progress_elapsed >= 60.0:
+                    interval_rate = (
+                        absolute_progress_step - progress_last_step
+                    ) / progress_elapsed
+                    cumulative_elapsed = now - progress_started
+                    cumulative_rate = (
+                        absolute_progress_step - progress_initial_step
+                    ) / cumulative_elapsed
+                    print(
+                        "PMMA progress "
+                        f"phase={phase_label} step={stop} "
+                        f"absolute_step={absolute_progress_step} "
+                        f"interval_steps_per_second={interval_rate:.4f} "
+                        f"window_seconds={progress_elapsed:.1f} "
+                        f"cumulative_steps_per_second={cumulative_rate:.4f}",
+                        flush=True,
+                    )
+                    progress_last_time = now
+                    progress_last_step = absolute_progress_step
                 interval_due = (
                     checkpoint_interval_seconds is not None
                     and now - last_checkpoint_time >= checkpoint_interval_seconds
@@ -4400,6 +4434,10 @@ def run_simulation_dumped(
     summary = {
         "backend": jax.default_backend(),
         "devices": [str(device) for device in jax.devices()],
+        "mpi_ranks": mpi_context.size,
+        "mpi_element_partition": mpi_context.enabled,
+        "simulation_elapsed_seconds": time.monotonic()
+        - simulation_started_monotonic,
         "dtype": str(history.dtype),
         "dimension": dimension,
         "thickness": float(model["thickness"]),
