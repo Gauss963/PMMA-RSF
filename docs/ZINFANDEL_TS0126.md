@@ -82,6 +82,12 @@ communication without increasing useful CPU throughput. The full sparse run
 is expected to take approximately 10-12 days; the 28-day allocation leaves
 enough margin for output and checkpoint overhead.
 
+The serial and 16-rank outputs from this production-size benchmark also passed
+all 47 dataset comparisons. The maximum bulk-stress difference was
+`2.91e-5 MPa`; the global relative differences were `2.67e-4` for slip rate
+and `6.21e-6` for RSF state. The comparison report is written to
+`runs-zinfandel/bench-serial-vs-mpi16.json` on zinfandel.
+
 ## Submission
 
 Check out the validation branch and submit the production script:
