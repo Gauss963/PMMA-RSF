@@ -1,0 +1,385 @@
+% Parameter and strategy record for the PMMA-RSF production campaign.
+% The source of truth for numerical values is cases/rsf_0117...rsf_0126.
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=1.55cm]{geometry}
+\usepackage{amsmath}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{pdflscape}
+\usepackage{siunitx}
+\usepackage[table]{xcolor}
+\usepackage[hidelinks]{hyperref}
+\usepackage{microtype}
+
+\sisetup{detect-all}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\newcommand{\run}[1]{\texttt{TS#1}}
+\newcommand{\file}[1]{\path{#1}}
+\newcommand{\NA}{--}
+
+\title{PMMA Rate-and-State Simulation Campaign\\
+\large Parameter and strategy record from TS0117 to TS0126}
+\author{Internal simulation note}
+\date{1 September 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This note records the controlled changes made in production runs \run{0117}
+through \run{0126}.  It separates parameters read directly from the committed
+TOML inputs from qualitative diagnoses made from the rupture maps and energy
+histories.  The campaign first corrected time integration, loading amplitude,
+and the rupture-stop criterion; restored the fully explicit normal-loading
+history; then tested progressively slower shear loading and several
+leading-edge rate-and-state profiles; and finally moved to a geometric
+chamfer.  The principal conclusion is that slower displacement loading is
+preferable for a physically interpretable experiment, but it is not by itself
+a remedy for reverse rupture.  A rapid loading pulse may create a visually
+clean front, but it changes the problem into a dynamically triggered rupture.
+The recommended next design is slow prestressing followed by an immediate
+fixed-displacement hold once a contiguous loading-end nucleus is detected.
+\end{abstract}
+
+\section{Scope and evidence}
+
+The numerical values in this document were transcribed from the following
+committed inputs:
+\begin{quote}\small
+\file{cases/rsf_0117_q4_explicit_10h.toml} through
+\file{cases/rsf_0126_q4_chamfer20x5_12h.toml}.
+\end{quote}
+The workflow notes in \file{docs/HPC_CASES.md} and the Git history were used to
+recover the purpose of each change.  Statements about forward or reverse
+rupture are campaign observations from the corresponding
+\file{mu_eff_map_phase_split}, animation, and energy figures; they are not
+presented as new automated measurements.  At the time of writing, \run{0126}
+had completed but its post-processing was still running, so its rupture
+outcome is deliberately marked pending.
+
+The standard run label is \run{0126}; ``TS00126'' is treated as a typographical
+variant of the same run.
+
+\section{Parameters held fixed}
+
+Unless a row below states otherwise, all ten production runs used the common
+values in Table~\ref{tab:fixed}.
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \caption{Parameters held fixed across the production campaign.}
+  \label{tab:fixed}
+  \begin{tabular}{@{}L{5.0cm}L{5.2cm}L{4.2cm}@{}}
+    \toprule
+    Quantity & Value & Interpretation \\
+    \midrule
+    Moving block & $200\times500\ \mathrm{mm^2}$ & Loading end at $y=0$; leading end at $y=500\ \mathrm{mm}$ \\
+    Stationary block & $145\times550\ \mathrm{mm^2}$ & Plane-strain two-block geometry \\
+    Material & $E=7662\ \mathrm{MPa}$, $\nu=0.2$, $\rho=1.148\times10^{-9}\ \mathrm{tonne/mm^3}$ & PMMA model \\
+    Normal load target & $u_n=0.6916209867\ \mathrm{mm}$ & Calibrated to approximately $16\ \mathrm{MPa}$ normal stress \\
+    Element and mesh & Q4, $h=0.50\ \mathrm{mm}$ & Approximately 1.44 million displacement DOFs before the chamfer \\
+    Explicit solver & \texttt{float32}, CFL $=0.35$, contact safety factor $=0.50$ & One global Tatva/JAX operator on one H200 \\
+    Shear loading shape & Half cosine & Prescribed at the moving-block loading face \\
+    Quasi-static shear fraction & 0 & All tangential loading is explicit dynamics \\
+    Initial/reference friction & $f_0=0.8$ unless overridden locally & Low-speed reference value \\
+    Reference velocities & $V_0=10^{-4}\ \mathrm{mm/s}$, $V_{\mathrm{cal}}=2000\ \mathrm{mm/s}$ & Middle zone is calibrated to $\mu=0.45$ at $V_{\mathrm{cal}}$ \\
+    Shared state distance & $D_c=3.7650493\times10^{-4}\ \mathrm{mm}$ & Derived from the $X_c=5\ \mathrm{mm}$ cohesive-zone anchor \\
+    Loading zone & $a=b=0.004$, length $30\ \mathrm{mm}$ & Velocity neutral, $a-b=0$ \\
+    Middle zone & $a=0.005$, $b=0.0258194007$ & Velocity weakening, $a-b=-0.0208194007$ \\
+    Boundary conditions & Loading face locked in shear during normal loading & Prevents tangential loading during the normal phase \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The elastic shear modulus and shear-wave transit time implied by these common
+parameters are
+\begin{equation}
+  G=\frac{E}{2(1+\nu)}=3192.5\ \mathrm{MPa},\qquad
+  c_s=\sqrt{G/\rho}=1668\ \mathrm{m/s},\qquad
+  t_s=\frac{500\ \mathrm{mm}}{c_s}=0.300\ \mathrm{ms}.
+  \label{eq:transit}
+\end{equation}
+These values are used below to distinguish slow elastic prestressing from a
+rapid rupture process.
+
+\section{Loading and numerical changes}
+
+For a half-cosine displacement ramp of amplitude $D$ and duration $T$,
+\begin{align}
+  u(t) &= \frac{D}{2}\left[1-\cos\left(\frac{\pi t}{T}\right)\right],
+  &0\leq t\leq T, \\
+  v_{\max} &= \frac{\pi D}{2T},
+  &|a(0)|=|a(T)|=\frac{\pi^2D}{2T^2}.
+  \label{eq:halfcosine}
+\end{align}
+Table~\ref{tab:loading} includes the resulting peak boundary speed.  A
+``relaxed'' normal phase means the short, damped normal-loading construction
+used before \run{0120}; ``explicit'' means the restored 40-ms undamped history
+with friction active and velocity carried continuously into shear.
+
+\begin{landscape}
+\begin{longtable}{@{}C{1.25cm}L{2.4cm}C{1.35cm}C{1.35cm}C{1.55cm}C{1.35cm}L{3.3cm}C{1.55cm}C{1.75cm}L{2.8cm}@{}}
+  \caption{Loading, stopping, integration, and output changes. Times are in ms,
+  displacement in mm, speed in mm/s, and $\Delta t$ in ns.}
+  \label{tab:loading}\\
+  \toprule
+  Run & Normal construction & $D$ & $T_{\rm shear}$ & $v_{\max}$ & $\Delta t$ & Loading-stop criterion & Bulk shear frames & Interface shear frames & Dump changes \\
+  \midrule
+  \endfirsthead
+  \toprule
+  Run & Normal construction & $D$ & $T_{\rm shear}$ & $v_{\max}$ & $\Delta t$ & Loading-stop criterion & Bulk shear frames & Interface shear frames & Dump changes \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \run{0117} & Relaxed: phase 3, ramp 0.5, damping time 0.2 & 2.45 & 10 ramp + 19 hold & 384.85 & 15 & One station at $y=440$: slip $\geq D_c$, $|V|\geq10$ & 36,000 & 300,000 & 1.20-TB cap; all standard bulk fields \\
+  \run{0118} & Same relaxed normal phase & 2.22 & 29, no planned hold & 120.25 & 10 & Same single $y=440$ station & 36,000 & 300,000 & Same as \run{0117} \\
+  \run{0119} & Same relaxed normal phase & 2.45 & 29 & 132.71 & 10 & 100\% coverage over $y=0.5$--499 plus $|V|\geq500$ & 36,000 & 300,000 & Same as \run{0118} \\
+  \run{0120} & Undamped explicit: phase 40, ramp 20 & 2.45 & 29 & 132.71 & 10 & Same full-fault swept-front criterion & 36,000 & 300,000 & Sparse normal output; 1.20-TB cap \\
+  \run{0121} & Same explicit normal phase & 2.45 & 43 & 89.50 & 10 & Same & 53,379 & 444,828 & Bulk strain omitted; physical shear sampling retained \\
+  \run{0122} & Same explicit normal phase & 2.45 & 57 & 67.52 & 10 & Same & 70,759 & 589,655 & Bulk strain and velocity omitted \\
+  \run{0123} & Same explicit normal phase & 2.45 & 75 & 51.31 & 10 & Same & 83,200 & 800,000 & Dump cap raised to 1.40 TB \\
+  \run{0124} & Same explicit normal phase & 2.45 & 75 & 51.31 & 10 & Same & 83,200 & 800,000 & Same as \run{0123} \\
+  \run{0125} & Same explicit normal phase & 2.45 & 75 & 51.31 & 10 & Same & 83,200 & 800,000 & Same as \run{0124} \\
+  \run{0126} & Same explicit normal phase & 2.45 & 75 & 51.31 & 10 & Coverage ends at $y=479$ because contact ends at 480 & 83,200 & 800,000 & Estimated compressed dump 1.394 TB \\
+\end{longtable}
+\end{landscape}
+
+Three changes in Table~\ref{tab:loading} must not be mistaken for friction-law
+effects:
+\begin{enumerate}
+  \item \run{0118} reduced the step from 15 to 10 ns, reduced the target
+  displacement from 2.45 to 2.22 mm, and spread the ramp over the full 29 ms.
+  \item \run{0119} repaired a premature stopping rule.  A single far-edge
+  station could be activated independently of the forward front, so the new
+  rule required a contiguous full-fault sweep and raised the dynamic velocity
+  threshold from 10 to 500 mm/s.
+  \item \run{0120} changed the initial stress construction by restoring the
+  40-ms fully explicit normal history.  It was therefore the first member of
+  the later, directly comparable loading family.
+\end{enumerate}
+
+\section{Fault-profile and geometry strategies}
+
+Table~\ref{tab:profile} records every production change to the terminal RSF
+profile.  The middle zone and shared $D_c$ remained fixed.  Here $L_{\rm VS}$
+is the length of the final plateau and $L_{\rm tr}$ is the half-cosine
+transition immediately before it.  Until \run{0121}, the loading-end and
+leading-end transition lengths were both 10 mm.  In \run{0122} the common
+transition became 50 mm, so this run also smoothed the loading-end profile.
+From \run{0124} onward the transitions were separated: the loading-end
+transition stayed 50 mm while the leading-end transition became 100 mm.
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \caption{Leading-edge RSF and geometry changes.  An omitted local $f_0$
+  inherits the global value 0.8.}
+  \label{tab:profile}
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{@{}C{1.5cm}C{0.85cm}C{0.85cm}C{1.5cm}C{1.8cm}C{1.15cm}C{1.15cm}L{5.6cm}@{}}
+    \toprule
+    Run & $f_{0,L}$ & $a_L$ & $b_L$ & $a_L-b_L$ & $L_{\rm VS}$ (mm) & $L_{\rm tr}$ (mm) & Intended strategy \\
+    \midrule
+    \run{0117}--\run{0120} & 0.80 & 0.008 & 0.005 & $+0.003$ & 30 & 10 & Baseline moderate velocity-strengthening (VS) barrier \\
+    \run{0121} & 0.80 & 0.010 & 0.004 & $+0.006$ & 40 & 10 & Stronger and longer VS patch placed over the reverse nucleus near $y\simeq458$ mm \\
+    \run{0122} & 0.70 & 0.012 & 0.004 & $+0.008$ & 50 & 50 & Low-$f_0$, strongly VS buffer intended to release prestress stably without unstable slip \\
+    \run{0123} & 0.80 & 0.005 & 0.0258194 & $-0.0208194$ & 0 & \NA & Controlled ablation: make the terminal fault identical to the middle VW zone \\
+    \run{0124} & 0.80 & 0.008 & 0.005 & $+0.003$ & 30 & 100 & Restore moderate VS but remove the sharp material-gradient scale with a long transition \\
+    \run{0125} & 0.80 & 0.006 & 0.005 & $+0.001$ & 30 & 100 & Near-velocity-neutral (near-VN) terminal patch to reduce impedance while retaining weak stability \\
+    \run{0126} & 0.80 & 0.008 & 0.005 & $+0.003$ & 30 & 100 & Restore \run{0124} friction; remove a $20\times5$ mm triangular wedge from the moving leading corner \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The \run{0126} chamfer is a continuous coordinate deformation of the Q4 mesh,
+not a staircase deletion.  The moving block narrows linearly over the last
+20 mm along the fault, reaching a 5-mm setback at $y=500$ mm.  The physical
+contact ends at $y=480$ mm, whereas the RSF profile remains anchored to the
+original 500-mm coordinate.  Consequently, every surviving contact station
+has exactly the \run{0124} friction parameters; geometry is the only physical
+intervention.
+
+\section{Run-by-run purpose and observed response}
+
+\begin{longtable}{@{}C{1.25cm}L{5.3cm}L{8.2cm}@{}}
+  \caption{Purpose and current interpretation of each production run.}
+  \label{tab:chronology}\\
+  \toprule
+  Run & Controlled question & Observation and interpretation \\
+  \midrule
+  \endfirsthead
+  \toprule
+  Run & Controlled question & Observation and interpretation \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \run{0117} & Does the $X_c=5$ mm RSF calibration rupture on the target 0.5-mm Q4 mesh with a 2.45-mm, 10-ms ramp? & Rupture was reported to finish near 11 ms, leaving most of the 29-ms phase unused.  Propagation was not cleanly self-sustaining and appeared to stall in the middle.  The 15-ns step was judged too close to the stability limit.  This motivated a 10-ns step and a slower terminal ramp. \\
+  \run{0118} & Can a lower 2.22-mm target and a 29-ms ramp reach full rupture with less excess loading? & A supporting 1-mm pilot nucleated dynamically at 21.208 ms, stopped the loading face at 25.051 ms and 2.120 mm, and reached the far end at 25.188 ms.  It stalled for 1.997 ms near $y=220$ mm.  Early-stop and 7-ms-hold pilots arrested near $y=137$--147 mm.  Thus the front was assisted by continuing edge loading and was not fully spontaneous.  A separate far-edge event also made the single-$y=440$ stop criterion unsafe. \\
+  \run{0119} & Does a full-coverage stop rule remove false early stopping while restoring the 2.45-mm margin? & This run isolated stopping logic from the friction law.  The campaign record does not contain a separate quantitative rupture verdict; its main contribution was the robust swept-front criterion used thereafter. \\
+  \run{0120} & Does restoring the original 40-ms fully explicit normal history recover the cleaner behavior of the earlier 0116 model? & Forward rupture improved, but a reverse rupture remained at the leading edge.  This was the first clear indication that terminal stress concentration, rather than only normal-state preparation or premature loading stop, controlled the unwanted second nucleus. \\
+  \run{0121} & Will a 43-ms ramp plus a longer, twice-stronger VS barrier suppress the reverse nucleus? & Reverse rupture remained visible, and the energy release was less abrupt than in the desired LSW reference.  Stronger VS alone did not remove the terminal stress concentration. \\
+  \run{0122} & Will a low-strength, strongly VS, broad RSF buffer creep stably and unload the terminal stress concentration? & Reverse rupture and the prolonged energy-release tail remained.  The combined $f_0$, VS amplitude, plateau length, transition length, and loading-rate changes make this result mechanistically informative but not a one-parameter test. \\
+  \run{0123} & Is the VS heterogeneity itself creating the reverse rupture? & Removing the terminal VS region made reverse rupture worse.  Therefore the VS region had some suppressive value, but it was not sufficient in the earlier forms. \\
+  \run{0124} & Can a moderate 30-mm VS plateau with a 100-mm transition suppress the interface-gradient stress riser? & The smoother transition still did not eliminate the leading-edge stress concentration or reverse rupture.  Attention shifted from friction-profile tuning to the physical corner geometry. \\
+  \run{0125} & Does reducing the terminal patch from $a-b=+0.003$ to $+0.001$ permit enough stable release without creating a weak patch? & The result was reported as almost unchanged.  Near-VN tuning did not materially improve the reverse-rupture problem. \\
+  \run{0126} & Does removing the moving-block corner stress singularity work better than further friction-law tuning? & Simulation complete; post-processing pending at the time of this note.  No rupture conclusion should be assigned until the phase-split map, energy history, and front chronology are available. \\
+\end{longtable}
+
+\section{Supporting pilot strategies}
+
+The production sequence was supported by lower-cost pilot scans.  They should
+be remembered because they constrain the interpretation of the production
+runs even though they do not carry TS run numbers.
+
+\begin{itemize}
+  \item \textbf{Displacement and natural arrest.}  Target displacements around
+  1.835, 1.850, 1.880, 1.900, and 2.220 mm were tested with 29-ms ramps.  The
+  1.835--1.900-mm cases asked whether a front could propagate after the loading
+  ramp ended naturally; the 2.220-mm case retained a far-end loading stop.
+  \item \textbf{Ramp and hold.}  Ramps of 22, 25.5, and 29 ms were tested.  The
+  22-ms cases included a 7-ms fixed-displacement hold.  Arrest during the hold
+  showed that ending external work early can expose insufficient stored energy
+  rather than merely ``cleaning'' the same rupture.
+  \item \textbf{Loading-end nucleation zone.}  Velocity-neutral loading zones
+  of 5 and 30 mm were examined.  Neutral direct/evolution coefficients included
+  $a=b=0.002$, 0.003, 0.004, 0.005, and 0.0258194.  Additional pilots changed
+  the middle direct effect while preserving the calibrated steady friction and
+  fracture energy.  These tests motivated the production choice
+  $a=b=0.004$ over 30 mm.
+  \item \textbf{Cohesive-zone calibration.}  $X_c=3.5$, 4, and 5 mm anchors
+  were bracketed, corresponding to shared RSF $D_c$ values from approximately
+  $2.64\times10^{-4}$ to $3.77\times10^{-4}$ mm.  Production retained the
+  5-mm anchor.
+  \item \textbf{Stop position and event definition.}  Stops near $y=30$, 40,
+  and 440 mm, natural no-stop cases, and eventually a full-fault contiguous
+  coverage test were compared.  This progression separated true forward-front
+  arrival from isolated corner or far-edge activation.
+  \item \textbf{GPU scaling.}  One and two visible H200 GPUs took 268.995 and
+  270.888 s in the scaling pilot.  The second GPU was idle because the current
+  operator has no spatial domain decomposition; production therefore remained
+  on one GPU.
+\end{itemize}
+
+\section{Is slower shear-displacement loading a good strategy?}
+
+\subsection{What the present runs establish}
+
+All of the imposed ramps are slow compared with bulk elastic communication.
+The 10-ms ramp of \run{0117} already spans approximately 33 shear-wave transit
+times, and the 75-ms ramp spans approximately 250.  The peak loading speed is
+only $2.3\times10^{-4}c_s$ in \run{0117} and
+$3.1\times10^{-5}c_s$ in \run{0123}--\run{0126}.  Therefore the distinction
+between ``fast'' and ``slow'' in this campaign is not whether the blocks can
+elastically equilibrate.  It is whether the boundary is still moving during
+the rupture, how much dynamic acceleration is imposed, and how much external
+work is added after nucleation.
+
+Lengthening the 2.45-mm ramp from 29 to 75 ms reduced the peak boundary speed
+from 132.7 to 51.3 mm/s (a 61.3\% reduction) and reduced endpoint acceleration
+from 14.38 to 2.15 m/s$^2$ (an 85.1\% reduction).  Nevertheless, reverse
+rupture persisted from \run{0120} through \run{0125}.  This is strong evidence
+that loading rate is not the root cause of the reverse front.  It is not a
+strict one-factor experiment, however, because the leading-edge RSF profile
+also changed in \run{0121}--\run{0125}.
+
+The \run{0118} pilot illustrates the external-work issue quantitatively.  With
+the 2.22-mm, 29-ms half cosine, loading-end rupture began at 21.208 ms, when
+the imposed displacement was approximately 1.847 mm.  The boundary was not
+stopped until 25.051 ms and 2.120 mm.  Thus approximately 0.272 mm of additional
+boundary displacement was imposed after dynamic nucleation.  Even though that
+ramp was slower than \run{0117}, the rupture was still externally assisted.
+
+\subsection{Why a deliberately fast trigger is risky}
+
+A faster displacement ramp can make the loading-end disturbance dominate all
+other nuclei and may therefore produce a visually cleaner one-way front.  That
+does not necessarily demonstrate a cleaner spontaneous rupture.  It also:
+\begin{itemize}
+  \item increases boundary acceleration and elastic-wave content;
+  \item raises instantaneous external power $P=F_{\rm reaction}\dot{u}$;
+  \item can carry the front through a marginal or otherwise arresting region;
+  \item makes rupture speed and energy release depend on the artificial drive;
+  \item weakens comparison with a slowly driven laboratory experiment.
+\end{itemize}
+Such a run is useful as a diagnostic ``forced-rupture'' control, but it should
+not be the primary physical case unless the experiment itself contains a
+comparably rapid actuator pulse.
+
+\subsection{Recommended loading protocol}
+
+The recommended strategy is neither indefinite slow loading nor a rapid kick.
+It is a separated preparation-and-event protocol:
+\begin{enumerate}
+  \item Build the normal stress with the established 40-ms fully explicit
+  history.
+  \item Apply the shear displacement slowly enough to keep the prestress field
+  quasi-static.  The existing 75-ms half cosine is conservative; a 29--50-ms
+  ramp is also quasi-static by the transit-time criterion and may reduce cost.
+  \item Detect a \emph{contiguous loading-end nucleus}, not one corner node and
+  not a far-edge station.  A practical criterion is a 10--20-mm-long band
+  outside the known 0--6-mm corner-slip zone with slip $\geq D_c$ and dynamic
+  $|V|\geq500\ \mathrm{mm/s}$.
+  \item Freeze the loading-face displacement immediately when that nucleus is
+  established.  Propagation after this point is powered by stored elastic
+  energy, so arrest or full rupture becomes a physically meaningful outcome.
+  \item Report the post-nucleation external work, the imposed displacement at
+  nucleation, kinetic/stored-energy ratio, nucleation coordinate, and any
+  reverse-front onset time for every run.
+\end{enumerate}
+
+This protocol directly satisfies the original requirement that the actuator
+must not continue adding appreciable energy during rupture.  It also avoids
+using a high-speed trigger to conceal the leading-edge stress concentration.
+If the front arrests after the boundary is frozen, the correct conclusion is
+that the current prestress and RSF profile do not support self-sustaining full
+rupture; the remedy should then target prestress, geometry, or a physically
+justified loading-end nucleation feature rather than loading faster.
+
+\subsection{Minimal controlled loading-rate test}
+
+The campaign does not yet contain a clean one-parameter loading-rate sweep at
+fixed friction and geometry.  After \run{0126} post-processing, the least
+ambiguous follow-up is a coarse-mesh pilot using the \run{0126} geometry and
+\run{0124} RSF profile with $D=2.45$ mm and ramp durations 29, 50, and 75 ms.
+All three should use the same contiguous loading-end stop described above.
+Compare:
+\begin{equation}
+  y_{\rm nuc},\quad u_{\rm nuc},\quad
+  \frac{E_k}{E_{\rm stored}}\bigg|_{\rm nuc},\quad
+  W_{\rm ext}(t>t_{\rm nuc}),\quad
+  c_R(y),\quad t_{\rm reverse}-t_{\rm nuc}.
+\end{equation}
+If these quantities converge as ramp duration increases, the shortest
+converged ramp is the efficient choice.  If only the 29-ms case gives a clean
+front and it has substantially larger post-nucleation work or kinetic energy,
+that front should be classified as dynamically forced rather than selected as
+the physical production solution.
+
+\section{Campaign conclusions}
+
+\begin{enumerate}
+  \item The 10-ns step, fully explicit 40-ms normal phase, and full-fault event
+  definition are numerical/workflow corrections that should remain fixed.
+  \item Slowing the ramp reduced dynamic boundary forcing but did not eliminate
+  reverse rupture.  The leading-edge stress concentration is the more likely
+  controlling mechanism.
+  \item Terminal VS has some suppressive effect: complete removal in
+  \run{0123} made reverse rupture worse.  Increasing VS strength, lowering
+  local $f_0$, broadening the transition, and approaching VN did not eliminate
+  the problem.
+  \item \run{0126} is the first production test that changes the physical
+  corner geometry while restoring a previously tested RSF profile.  Its
+  pending post-processing is therefore more diagnostic than another compound
+  friction-profile change.
+  \item Slow prestress followed by fixed-displacement rupture is preferred to
+  a rapid trigger.  A fast-trigger case may still be retained as a clearly
+  labelled control.
+\end{enumerate}
+
+\end{document}
