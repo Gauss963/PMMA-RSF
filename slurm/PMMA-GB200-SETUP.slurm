@@ -8,6 +8,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
+#SBATCH --mem=64G
 #SBATCH --time=01:00:00
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=b09501028@ntu.edu.tw

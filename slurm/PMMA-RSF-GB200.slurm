@@ -8,6 +8,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=12
 #SBATCH --gres=gpu:1
+#SBATCH --mem=200G
 #SBATCH --time=08:00:00
 #SBATCH --signal=B:USR1@600
 #SBATCH --mail-type=END,FAIL
@@ -20,7 +21,7 @@ ENV_NAME=tatva-gb200
 PYTHON=/home/gauss112/.conda/envs/$ENV_NAME/bin/python
 CASE_FILE=${CASE_FILE:-$ROOT/cases/rsf_0127_q4_chamfer20x5_gb200_8h.toml}
 RESUME_DIR=${RESUME_DIR:-}
-RUN_DIR_OVERRIDE=${RUN_DIR_OVERRIDE:-}
+RUN_DIR_OVERRIDE=${RUN_DIR_OVERRIDE:-$ROOT/runs/TS0127}
 RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-27600}
 
 module purge
@@ -34,6 +35,16 @@ conda activate "$ENV_NAME"
 }
 [[ -x "$PYTHON" ]] || { echo "Missing Python: $PYTHON" >&2; exit 1; }
 
+# Two setup jobs may race to submit production. Serialize access to the fixed
+# TS0127 directory and make a later duplicate exit without allocating TS0128.
+LOCK_DIR="$ROOT/.run_locks"
+mkdir -p "$LOCK_DIR"
+exec 9>"$LOCK_DIR/TS0127.lock"
+if ! flock -n 9; then
+  echo "Another TS0127 production job holds the run lock; exiting duplicate job."
+  exit 0
+fi
+
 if [[ -n "$RESUME_DIR" ]]; then
   RUN_DIR="$RESUME_DIR"
   RESUME_ARGS=(--resume)
@@ -46,6 +57,11 @@ else
   RESUME_ARGS=()
 fi
 LOG_DIR="$RUN_DIR/logs"
+
+if [[ -z "$RESUME_DIR" && -f "$RUN_DIR/status.json" ]]; then
+  echo "TS0127 already has status.json; use RESUME_DIR explicitly if it needs resuming."
+  exit 0
+fi
 
 export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONUNBUFFERED=1

@@ -9,11 +9,14 @@ MEMORY_DIRECTIVE = re.compile(
 )
 
 
-def test_slurm_scripts_leave_memory_allocation_to_scheduler():
+def test_non_gb200_slurm_scripts_leave_memory_allocation_to_scheduler():
     scripts = sorted((ROOT / "slurm").glob("*.slurm"))
+    gb200_scripts = {"PMMA-GB200-SETUP.slurm", "PMMA-RSF-GB200.slurm"}
 
     assert scripts
     for script in scripts:
+        if script.name in gb200_scripts:
+            continue
         content = script.read_text(encoding="utf-8")
         assert not MEMORY_DIRECTIVE.search(content), (
             f"{script.name} specifies memory; leave RAM allocation to Slurm."
@@ -25,6 +28,7 @@ def test_gb200_setup_builds_an_isolated_arm_environment():
 
     assert "#SBATCH --partition=gb200-dev" in content
     assert "#SBATCH --gres=gpu:1" in content
+    assert "#SBATCH --mem=64G" in content
     assert "module load miniconda3/26.1.1" in content
     assert "ENV_NAME=tatva-gb200" in content
     assert '"$(uname -m)" == "aarch64"' in content
@@ -41,6 +45,9 @@ def test_gb200_production_uses_one_gpu_for_eight_hours():
     assert "#SBATCH --partition=gb200-r1" in content
     assert "#SBATCH --nodes=1" in content
     assert "#SBATCH --gres=gpu:1" in content
+    assert "#SBATCH --mem=200G" in content
     assert "#SBATCH --time=08:00:00" in content
     assert "RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-27600}" in content
+    assert "RUN_DIR_OVERRIDE=${RUN_DIR_OVERRIDE:-$ROOT/runs/TS0127}" in content
+    assert 'flock -n 9' in content
     assert "rsf_0127_q4_chamfer20x5_gb200_8h.toml" in content
