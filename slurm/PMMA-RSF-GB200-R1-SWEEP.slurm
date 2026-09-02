@@ -74,7 +74,7 @@ PY
 
 pids=()
 for index in $(seq 1 16); do
-  srun --exclusive --exact \
+  srun --exclusive --exact --mpi=none \
     --nodes=1 --ntasks=1 --cpus-per-task=12 \
     --gpus-per-task=1 --gpu-bind=single:1 \
     env \
@@ -96,4 +96,3 @@ done
 
 echo "GB200 loading-end sweep job ended at $(date -u +%Y-%m-%dT%H:%M:%SZ); failed=$failed"
 exit "$failed"
-

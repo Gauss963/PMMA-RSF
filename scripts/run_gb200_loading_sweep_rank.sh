@@ -82,17 +82,19 @@ echo "Host: $(hostname); CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
 echo "Case: $CASE_FILE"
 echo "Runner time limit: $RUN_TIME_LIMIT_SECONDS seconds"
 
+step_tasks=${SLURM_STEP_NUM_TASKS:-1}
+if [[ "$step_tasks" != "1" ]]; then
+  echo "Independent sweep run requires one Slurm task, found $step_tasks." >&2
+  exit 1
+fi
+
 "$PYTHON" - <<'PY'
 import jax
-from tatva.pmma.mpi import get_mpi_context
 
 devices = jax.devices()
-context = get_mpi_context()
-print(f"JAX devices={devices}; PMMA MPI size={context.size}")
+print(f"JAX devices={devices}; independent serial run")
 if len(devices) != 1 or devices[0].platform != "gpu":
     raise SystemExit(f"Expected exactly one GPU, found {devices}.")
-if context.size != 1:
-    raise SystemExit(f"Independent sweep task requires MPI size 1, found {context.size}.")
 PY
 
 gpu_id=${CUDA_VISIBLE_DEVICES%%,*}
@@ -165,4 +167,3 @@ run_status=$(
 )
 echo "$run_id finished this allocation with status: $run_status"
 echo "$run_id sweep task ended at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
