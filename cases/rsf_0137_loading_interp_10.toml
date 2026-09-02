@@ -1,0 +1,92 @@
+[case]
+name = "pmma-rsf-0137-loading-ab-10of16"
+run_root = "runs"
+
+[geometry.moving]
+origin = [0.0, 0.0]
+dimensions = [200.0, 500.0]
+leading_chamfer_along_fault = 20.0
+leading_chamfer_perpendicular = 5.0
+
+[geometry.stationary]
+origin = [200.0, 0.0]
+dimensions = [145.0, 550.0]
+
+[material]
+density = 1.148e-9
+young_modulus = 7662.0
+poisson_ratio = 0.2
+
+[loading]
+normal_stress_reference = 16.0
+normal_displacement = 0.691620986687549
+normal_phase_time = 0.040
+normal_ramp_time = 0.020
+shear_displacement_initial = 0.0
+shear_displacement_final = 2.45
+quasistatic_shear_fraction = 0.0
+quasistatic_shear_start_time = 0.0
+quasistatic_shear_ramp_time = 0.0
+shear_phase_time = 0.075
+shear_ramp_time = 0.075
+shear_ramp_shape = "half-cosine"
+stop_on_rupture = true
+stop_slip = 0.0003765049284695767
+stop_velocity = 500.0
+stop_min_y = 0.5
+stop_max_y = 479.0
+stop_coverage_fraction = 1.0
+lock_shear_edge_during_normal = true
+relax_tangential_contact_during_normal = false
+
+[numerics]
+mesh_size = 0.50
+cfl = 0.35
+contact_safety_factor = 0.50
+time_step = 1.0e-8
+dtype = "float32"
+operator_batch_size = 65536
+
+[output]
+bulk_normal_frames = 2
+bulk_shear_frames = 5200
+interface_normal_frames = 100
+interface_shear_frames = 50000
+compression = "lzf"
+estimated_compression_ratio = 0.955
+include_initial_frame = false
+maximum_dump_tb = 0.10
+checkpoint_interval_minutes = 10.0
+store_bulk_strain = false
+store_bulk_velocity = false
+
+[rsf]
+initial_friction = 0.8
+reference_velocity = 1.0e-4
+reference_state = 3.3e-4
+initial_steady_velocity = 1.0e-4
+dynamic_calibration_velocity = 2000.0
+target_middle_dynamic_friction = 0.45
+loading_length = 30.0
+leading_length = 30.0
+transition_length = 50.0
+loading_transition_length = 50.0
+leading_transition_length = 100.0
+
+[rsf.loading]
+# lambda = 10/16 between TS0127 velocity-neutral and the middle zone.
+a = 0.0046249999999999998
+b = 0.017637125408710437
+dc = 0.0003765049284695767
+
+[rsf.middle]
+a = 0.005
+b = 0.025819400653936703
+dc = 0.0003765049284695767
+
+[rsf.leading]
+f0 = 0.8
+a = 0.008
+b = 0.005
+dc = 0.0003765049284695767
+

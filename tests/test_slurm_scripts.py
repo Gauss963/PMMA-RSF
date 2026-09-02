@@ -11,11 +11,15 @@ MEMORY_DIRECTIVE = re.compile(
 
 def test_non_gb200_slurm_scripts_leave_memory_allocation_to_scheduler():
     scripts = sorted((ROOT / "slurm").glob("*.slurm"))
-    gb200_scripts = {"PMMA-GB200-SETUP.slurm", "PMMA-RSF-GB200.slurm"}
+    explicit_memory_scripts = {
+        "PMMA-GB200-SETUP.slurm",
+        "PMMA-RSF-GB200.slurm",
+        "PMMA-RSF-GB200-R1-SWEEP.slurm",
+    }
 
     assert scripts
     for script in scripts:
-        if script.name in gb200_scripts:
+        if script.name in explicit_memory_scripts:
             continue
         content = script.read_text(encoding="utf-8")
         assert not MEMORY_DIRECTIVE.search(content), (
@@ -54,3 +58,31 @@ def test_gb200_development_pilot_uses_one_gpu_for_two_hours():
     assert "module load miniconda3" not in content
     assert 'flock -n 9' in content
     assert "rsf_0127_q4_chamfer20x5_gb200_8h.toml" in content
+
+
+def test_gb200_r1_sweep_uses_sixteen_independent_gpu_steps():
+    content = (ROOT / "slurm/PMMA-RSF-GB200-R1-SWEEP.slurm").read_text(
+        encoding="utf-8"
+    )
+    rank_runner = (ROOT / "scripts/run_gb200_loading_sweep_rank.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "#SBATCH --partition=gb200-r1" in content
+    assert "#SBATCH --nodes=4" in content
+    assert "#SBATCH --ntasks=16" in content
+    assert "#SBATCH --ntasks-per-node=4" in content
+    assert "#SBATCH --gres=gpu:4" in content
+    assert "#SBATCH --mem=800G" in content
+    assert "#SBATCH --time=16:00:00" in content
+    assert "--gpus-per-task=1" in content
+    assert "srun --exclusive --exact" in content
+    assert "for index in $(seq 1 16)" in content
+    assert "RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-55800}" in content
+    assert "estimated_total + 50_000_000_000" in content
+
+    assert "run_number=$((127 + SWEEP_INDEX))" in rank_runner
+    assert 'RUN_DIR="$ROOT/runs/$run_id"' in rank_runner
+    assert "context.size != 1" in rank_runner
+    assert "Free space $free_bytes is below" in rank_runner
+    assert "RESUME_ARGS=(--resume)" in rank_runner

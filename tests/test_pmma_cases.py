@@ -1,3 +1,4 @@
+from dataclasses import asdict
 from pathlib import Path
 import time
 
@@ -51,6 +52,11 @@ TS0123_CASE = ROOT / "cases/rsf_0123_q4_uniform_leading_slow_12h.toml"
 TS0124_CASE = ROOT / "cases/rsf_0124_q4_vs30_long_transition_12h.toml"
 TS0125_CASE = ROOT / "cases/rsf_0125_q4_near_vn_leading_12h.toml"
 TS0126_CASE = ROOT / "cases/rsf_0126_q4_chamfer20x5_12h.toml"
+TS0127_CASE = ROOT / "cases/rsf_0127_q4_chamfer20x5_gb200_8h.toml"
+LOADING_SWEEP_CASES = [
+    ROOT / "cases" / f"rsf_{run:04d}_loading_interp_{index:02d}.toml"
+    for index, run in enumerate(range(128, 144), start=1)
+]
 
 
 def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
@@ -82,6 +88,64 @@ def test_cohesive_calibrated_case_matches_lc_estimate():
         assert zone.state_effect == pytest.approx(RSF_ZONES[name]["b"])
         assert zone.characteristic_slip == pytest.approx(expected_dc_mm)
     assert config.loading.stop_slip == pytest.approx(expected_dc_mm)
+
+
+def test_loading_end_sweep_interpolates_only_loading_ab_and_reduces_frames():
+    baseline = load_case_config(TS0127_CASE)
+    baseline_common = asdict(baseline)
+    for key in ("name", "output", "rsf"):
+        baseline_common.pop(key)
+
+    baseline_rsf = asdict(baseline.rsf)
+    baseline_rsf.pop("loading")
+    baseline_output = asdict(baseline.output)
+    for key in (
+        "bulk_shear_frames",
+        "interface_shear_frames",
+        "maximum_dump_tb",
+    ):
+        baseline_output.pop(key)
+
+    for index, path in enumerate(LOADING_SWEEP_CASES, start=1):
+        config = load_case_config(path)
+        fraction = index / 16.0
+
+        common = asdict(config)
+        for key in ("name", "output", "rsf"):
+            common.pop(key)
+        assert common == baseline_common
+
+        rsf = asdict(config.rsf)
+        loading = rsf.pop("loading")
+        assert rsf == baseline_rsf
+        assert loading["direct_effect"] == pytest.approx(
+            baseline.rsf.loading.direct_effect
+            + fraction
+            * (
+                baseline.rsf.middle.direct_effect
+                - baseline.rsf.loading.direct_effect
+            )
+        )
+        assert loading["state_effect"] == pytest.approx(
+            baseline.rsf.loading.state_effect
+            + fraction
+            * (
+                baseline.rsf.middle.state_effect
+                - baseline.rsf.loading.state_effect
+            )
+        )
+        assert loading["characteristic_slip"] == pytest.approx(
+            baseline.rsf.loading.characteristic_slip
+        )
+
+        output = asdict(config.output)
+        assert output.pop("bulk_shear_frames") == 5200
+        assert output.pop("interface_shear_frames") == 50000
+        assert output.pop("maximum_dump_tb") == pytest.approx(0.10)
+        assert output == baseline_output
+        assert config.name == (
+            f"pmma-rsf-{127 + index:04d}-loading-ab-{index:02d}of16"
+        )
 
 
 def test_storage_preflight_uses_uncompressed_remaining_size_and_reserve(
