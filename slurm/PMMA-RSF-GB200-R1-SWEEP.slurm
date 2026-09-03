@@ -11,7 +11,7 @@
 #SBATCH --gres=gpu:4
 #SBATCH --mem=800G
 #SBATCH --time=16:00:00
-#SBATCH --signal=B:USR1@900
+#SBATCH --signal=USR1@1800
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=b09501028@ntu.edu.tw
 
@@ -20,7 +20,7 @@ set -euo pipefail
 ROOT=/work/gauss112/tatva
 ENV_PREFIX=/work/gauss112/.venvs/tatva-gb200
 PYTHON=$ENV_PREFIX/bin/python
-RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-55800}
+RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-54000}
 MIN_FREE_BYTES=${MIN_FREE_BYTES:-50000000000}
 
 [[ -x "$PYTHON" ]] || { echo "Missing Python: $PYTHON" >&2; exit 1; }

@@ -57,12 +57,8 @@ if [[ -f "$RUN_DIR/status.json" ]]; then
       RESUME_ARGS=(--resume)
       ;;
     failed|running)
-      [[ -f "$RUN_DIR/checkpoint.npz" ]] || {
-        echo "$run_id has status '$run_status' and no checkpoint to resume." >&2
-        exit 1
-      }
-      echo "$run_id has status '$run_status' after an interrupted allocation; resuming it."
-      RESUME_ARGS=(--resume)
+      echo "$run_id has unsafe status '$run_status'; refusing automatic HDF5 resume." >&2
+      exit 1
       ;;
     *)
       echo "$run_id has non-resumable status '$run_status'; refusing to overwrite it." >&2
