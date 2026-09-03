@@ -103,11 +103,16 @@ def test_cpu_analysis_sweep_processes_every_run_without_animation():
     )
 
     assert "#SBATCH --partition=hm112" in content
-    assert "#SBATCH --array=128-143%4" in content
+    assert "#SBATCH --cpus-per-task=32" in content
+    assert "#SBATCH --array" not in content
     assert "ROOT=/work1/gauss112/tatva" in content
-    assert 'RUN_ID=$(printf "TS%04d" "$SLURM_ARRAY_TASK_ID")' in content
+    assert "RUN_FIRST=${RUN_FIRST:-128}" in content
+    assert "RUN_LAST=${RUN_LAST:-143}" in content
+    assert "WORKERS=${WORKERS:-4}" in content
+    assert 'run_id=$(printf "TS%04d" "$run_number")' in content
+    assert "worker \"$worker_index\" &" in content
     assert "postprocess_velocity_weakening_run.py" in content
-    assert "--input \"$INPUT\" --dpi 260" in content
+    assert "--input \"$input\" --dpi 260" in content
     assert "render_stress_frames.py" not in content
     assert "make_stress_animation.py" not in content
     assert "stress_triptych_frames" not in content
