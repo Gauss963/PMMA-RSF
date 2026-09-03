@@ -77,15 +77,19 @@ def test_gb200_r1_sweep_uses_sixteen_independent_gpu_steps():
     assert "#SBATCH --time=16:00:00" in content
     assert "--mpi=none" in content
     assert "--gpus-per-task=1" in content
-    assert "srun --exclusive --exact" in content
-    assert "for index in $(seq 1 16)" in content
+    assert "srun --exact --mpi=none --kill-on-bad-exit=0" in content
+    assert "--ntasks=16 --ntasks-per-node=4" in content
+    assert "SWEEP_INDEX=$((SLURM_PROCID + 1))" in content
     assert "RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-55800}" in content
-    assert "estimated_total + 50_000_000_000" in content
+    assert "estimated_remaining + 50_000_000_000" in content
 
     assert "run_number=$((127 + SWEEP_INDEX))" in rank_runner
     assert 'RUN_DIR="$ROOT/runs/$run_id"' in rank_runner
-    assert "SLURM_STEP_NUM_TASKS" in rank_runner
+    assert "SLURM_PROCID + 1" in rank_runner
     assert "tatva.pmma.mpi" not in rank_runner
     assert "mpi4py" not in rank_runner
+    assert "XLA_PYTHON_CLIENT_MEM_FRACTION=0.90" in rank_runner
+    assert "XLA_FLAGS=--xla_gpu_enable_command_buffer=" in rank_runner
+    assert 'failed)' in rank_runner
     assert "Free space $free_bytes is below" in rank_runner
     assert "RESUME_ARGS=(--resume)" in rank_runner

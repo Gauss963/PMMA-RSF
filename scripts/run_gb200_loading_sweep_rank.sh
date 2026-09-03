@@ -56,6 +56,14 @@ if [[ -f "$RUN_DIR/status.json" ]]; then
       }
       RESUME_ARGS=(--resume)
       ;;
+    failed)
+      [[ -f "$RUN_DIR/checkpoint.npz" ]] || {
+        echo "$run_id failed and has no checkpoint to resume." >&2
+        exit 1
+      }
+      echo "$run_id failed after its last periodic checkpoint; resuming it."
+      RESUME_ARGS=(--resume)
+      ;;
     *)
       echo "$run_id has non-resumable status '$run_status'; refusing to overwrite it." >&2
       exit 1
@@ -68,7 +76,9 @@ export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONUNBUFFERED=1
 export JAX_ENABLE_X64=0
 export JAX_PLATFORMS=cuda
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.94
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.90
+# JAX CUDA graphs accumulated until they exhausted GB200 driver memory.
+export XLA_FLAGS=--xla_gpu_enable_command_buffer=
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-12}
 export OPENBLAS_NUM_THREADS=$OMP_NUM_THREADS
 export HDF5_USE_FILE_LOCKING=TRUE
@@ -82,10 +92,12 @@ echo "Host: $(hostname); CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
 echo "Case: $CASE_FILE"
 echo "Runner time limit: $RUN_TIME_LIMIT_SECONDS seconds"
 
-step_tasks=${SLURM_STEP_NUM_TASKS:-1}
-if [[ "$step_tasks" != "1" ]]; then
-  echo "Independent sweep run requires one Slurm task, found $step_tasks." >&2
-  exit 1
+if [[ -n "${SLURM_PROCID:-}" ]]; then
+  expected_index=$((SLURM_PROCID + 1))
+  if [[ "$SWEEP_INDEX" != "$expected_index" ]]; then
+    echo "Sweep index $SWEEP_INDEX does not match Slurm process $SLURM_PROCID." >&2
+    exit 1
+  fi
 fi
 
 "$PYTHON" - <<'PY'
