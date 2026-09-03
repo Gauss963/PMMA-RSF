@@ -95,3 +95,19 @@ def test_gb200_r1_sweep_uses_sixteen_independent_gpu_steps():
     assert "refusing automatic HDF5 resume" in rank_runner
     assert "Free space $free_bytes is below" in rank_runner
     assert "RESUME_ARGS=(--resume)" in rank_runner
+
+
+def test_cpu_analysis_sweep_processes_every_run_without_animation():
+    content = (ROOT / "slurm/PMMA-ANALYSIS-SWEEP-CPU.slurm").read_text(
+        encoding="utf-8"
+    )
+
+    assert "#SBATCH --partition=hm112" in content
+    assert "#SBATCH --array=128-143%4" in content
+    assert "ROOT=/work1/gauss112/tatva" in content
+    assert 'RUN_ID=$(printf "TS%04d" "$SLURM_ARRAY_TASK_ID")' in content
+    assert "postprocess_velocity_weakening_run.py" in content
+    assert "--input \"$INPUT\" --dpi 260" in content
+    assert "render_stress_frames.py" not in content
+    assert "make_stress_animation.py" not in content
+    assert "stress_triptych_frames" not in content
