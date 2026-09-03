@@ -177,3 +177,14 @@ so rupture coverage is evaluated through y=479 mm. The RSF profile remains
 anchored to the original 500 mm coordinates; all surviving fault stations
 therefore retain exactly the TS0124 `f0`, `a`, `b`, and `D_c` values. Loading,
 time step, output rates, and the 1.40 TB dump budget remain unchanged.
+
+TS0144 through TS0159 form a controlled shear-loading-rate sweep based on
+TS0126. Geometry, the VN/VW/VS profile, normal loading, 2.45 mm target shear
+displacement, 75 ms shear window, 10 ns step, and rupture-stop rule are held
+fixed. The half-cosine peak-speed multiplier is linearly spaced from 1 to 3 in
+16 values, so the ramp duration is `0.075 / multiplier` seconds and ranges
+from 75 to 25 ms. Each case retains 1/16 of the TS0126 bulk and interface
+shear-frame targets, giving an estimated 0.0871 TB per run and 1.394 TB for
+the complete sweep. The committed cases are generated and verified by
+`scripts/generate_shear_rate_sweep_cases.py`; the GB200-r1 launcher assigns
+one independent case to each of 16 GPUs without MPI.

@@ -57,6 +57,10 @@ LOADING_SWEEP_CASES = [
     ROOT / "cases" / f"rsf_{run:04d}_loading_interp_{index:02d}.toml"
     for index, run in enumerate(range(128, 144), start=1)
 ]
+SHEAR_RATE_SWEEP_CASES = [
+    ROOT / "cases" / f"rsf_{run:04d}_shear_rate_{index:02d}.toml"
+    for index, run in enumerate(range(144, 160), start=1)
+]
 
 
 def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
@@ -145,6 +149,44 @@ def test_loading_end_sweep_interpolates_only_loading_ab_and_reduces_frames():
         assert output == baseline_output
         assert config.name == (
             f"pmma-rsf-{127 + index:04d}-loading-ab-{index:02d}of16"
+        )
+
+
+def test_shear_rate_sweep_changes_only_ramp_time_and_reduces_frames():
+    baseline = load_case_config(TS0126_CASE)
+    baseline_common = asdict(baseline)
+    for key in ("name", "output"):
+        baseline_common.pop(key)
+    baseline_common["loading"].pop("shear_ramp_time")
+
+    baseline_output = asdict(baseline.output)
+    for key in (
+        "bulk_shear_frames",
+        "interface_shear_frames",
+        "maximum_dump_tb",
+    ):
+        baseline_output.pop(key)
+
+    for index, path in enumerate(SHEAR_RATE_SWEEP_CASES, start=1):
+        config = load_case_config(path)
+        speed_factor = 1.0 + 2.0 * (index - 1) / 15.0
+
+        common = asdict(config)
+        for key in ("name", "output"):
+            common.pop(key)
+        ramp_time = common["loading"].pop("shear_ramp_time")
+        assert common == baseline_common
+        assert ramp_time == pytest.approx(0.075 / speed_factor)
+        assert config.loading.shear_phase_time == pytest.approx(0.075)
+        assert config.loading.shear_displacement_final == pytest.approx(2.45)
+
+        output = asdict(config.output)
+        assert output.pop("bulk_shear_frames") == 5200
+        assert output.pop("interface_shear_frames") == 50000
+        assert output.pop("maximum_dump_tb") == pytest.approx(0.10)
+        assert output == baseline_output
+        assert config.name == (
+            f"pmma-rsf-{143 + index:04d}-shear-rate-{index:02d}of16"
         )
 
 
