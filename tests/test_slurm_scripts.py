@@ -82,7 +82,8 @@ def test_gb200_r1_sweep_uses_sixteen_independent_gpu_steps():
     assert "--ntasks=16 --ntasks-per-node=4" in content
     assert "SWEEP_INDEX=$((SLURM_PROCID + 1))" in content
     assert "RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-54000}" in content
-    assert "estimated_remaining + 50_000_000_000" in content
+    assert "estimated_remaining + 20_000_000_000" in content
+    assert "MIN_FREE_BYTES=${MIN_FREE_BYTES:-10000000000}" in content
 
     assert "run_number=$((127 + SWEEP_INDEX))" in rank_runner
     assert 'RUN_DIR="$ROOT/runs/$run_id"' in rank_runner

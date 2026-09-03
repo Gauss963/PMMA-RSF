@@ -21,7 +21,7 @@ ROOT=/work/gauss112/tatva
 ENV_PREFIX=/work/gauss112/.venvs/tatva-gb200
 PYTHON=$ENV_PREFIX/bin/python
 RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-54000}
-MIN_FREE_BYTES=${MIN_FREE_BYTES:-50000000000}
+MIN_FREE_BYTES=${MIN_FREE_BYTES:-10000000000}
 
 [[ -x "$PYTHON" ]] || { echo "Missing Python: $PYTHON" >&2; exit 1; }
 export PATH="$ENV_PREFIX/bin:$PATH"
@@ -72,7 +72,7 @@ existing_bytes = sum(
 )
 estimated_remaining = estimated_total - existing_bytes
 free_bytes = shutil.disk_usage(root).free
-required_bytes = estimated_remaining + 50_000_000_000
+required_bytes = estimated_remaining + 20_000_000_000
 print(
     f"Sweep storage gate: per_case={estimate['estimated_dump_tb']:.4f} TB; "
     f"total={estimated_total / 1e12:.4f} TB; "
