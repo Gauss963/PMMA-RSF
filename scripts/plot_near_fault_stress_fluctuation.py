@@ -226,6 +226,75 @@ def required_frame_time_bounds(
     )
 
 
+def piecewise_linear_window_mean(
+    time: np.ndarray,
+    values: np.ndarray,
+    window_start: float,
+    window_end: float,
+) -> np.ndarray:
+    """Return the exact time average of linearly interpolated saved samples."""
+    sample_time = np.asarray(time, dtype=np.float64)
+    sample_values = np.asarray(values)
+    if sample_time.ndim != 1:
+        raise ValueError("Window-average time coordinates must be one-dimensional.")
+    if sample_values.ndim < 1 or sample_values.shape[0] != len(sample_time):
+        raise ValueError("Window-average values must use time as their first axis.")
+    if len(sample_time) < 2 or np.any(np.diff(sample_time) <= 0.0):
+        raise ValueError("Window-average time coordinates must strictly increase.")
+    if not np.isfinite(window_start) or not np.isfinite(window_end):
+        raise ValueError("Window-average bounds must be finite.")
+    if window_start >= window_end:
+        raise ValueError("Window-average start must precede its end.")
+    tolerance = 16.0 * np.finfo(np.float64).eps * max(
+        1.0,
+        abs(float(sample_time[0])),
+        abs(float(sample_time[-1])),
+    )
+    if (
+        window_start < sample_time[0] - tolerance
+        or window_end > sample_time[-1] + tolerance
+    ):
+        raise ValueError("Window-average bounds extend beyond the saved samples.")
+
+    window_start = max(float(window_start), float(sample_time[0]))
+    window_end = min(float(window_end), float(sample_time[-1]))
+
+    def interpolate_at(target: float) -> np.ndarray:
+        upper = int(np.searchsorted(sample_time, target, side="left"))
+        if upper < len(sample_time) and np.isclose(
+            sample_time[upper], target, rtol=0.0, atol=tolerance
+        ):
+            return np.asarray(sample_values[upper], dtype=np.float64)
+        if upper == 0 or upper == len(sample_time):
+            raise ValueError("Window endpoint is not bracketed by saved samples.")
+        lower = upper - 1
+        fraction = (target - sample_time[lower]) / (
+            sample_time[upper] - sample_time[lower]
+        )
+        return np.asarray(sample_values[lower], dtype=np.float64) + fraction * (
+            np.asarray(sample_values[upper], dtype=np.float64)
+            - np.asarray(sample_values[lower], dtype=np.float64)
+        )
+
+    interior = (sample_time > window_start) & (sample_time < window_end)
+    integration_time = np.concatenate(
+        ([window_start], sample_time[interior], [window_end])
+    )
+    integration_values = np.concatenate(
+        (
+            interpolate_at(window_start)[None, ...],
+            np.asarray(sample_values[interior], dtype=np.float64),
+            interpolate_at(window_end)[None, ...],
+        ),
+        axis=0,
+    )
+    return np.trapezoid(
+        integration_values,
+        x=integration_time,
+        axis=0,
+    ) / (window_end - window_start)
+
+
 def first_crossing_times(
     dataset: h5py.Dataset,
     frame_indices: np.ndarray,
@@ -1335,31 +1404,25 @@ def main() -> int:
     for station_index, arrival in enumerate(station_tip_arrival):
         local_time_ms = frame_time_ms - arrival
         local_xi = -speed_m_per_s * local_time_ms
-        residual_mask = (
-            (local_time_ms >= residual_start_ms)
-            & (local_time_ms <= residual_end_ms)
-        )
-        pre_mask = (
-            (local_time_ms >= -residual_end_ms)
-            & (local_time_ms <= -residual_start_ms)
-        )
-        if np.count_nonzero(residual_mask) < 2:
-            raise ValueError(
-                f"Residual window contains fewer than two frames at y="
-                f"{stations[station_index]:g} mm."
-            )
-        if np.count_nonzero(pre_mask) < 2:
-            raise ValueError(
-                f"Pre-tip window contains fewer than two frames at y="
-                f"{stations[station_index]:g} mm."
-            )
         order = np.argsort(local_xi)
         for distance_index in range(len(distances)):
             trace = probe_stress[:, station_index, distance_index]
-            residual = float(np.mean(trace[residual_mask], dtype=np.float64))
+            residual = float(
+                piecewise_linear_window_mean(
+                    local_time_ms,
+                    trace,
+                    residual_start_ms,
+                    residual_end_ms,
+                )
+            )
             residual_stress[station_index, distance_index] = residual
             pre_stress[station_index, distance_index] = float(
-                np.mean(trace[pre_mask], dtype=np.float64)
+                piecewise_linear_window_mean(
+                    local_time_ms,
+                    trace,
+                    -residual_end_ms,
+                    -residual_start_ms,
+                )
             )
             delta_trace = trace.astype(np.float64) - residual
             delta_stress[:, station_index, distance_index] = np.interp(
@@ -1459,6 +1522,7 @@ def main() -> int:
             args.residual_start_us,
             args.residual_end_us,
         ],
+        "window_average_method": "piecewise-linear time integral",
         "residual_sigma_xy_mpa": residual_stress.tolist(),
         "pre_tip_sigma_xy_mpa": pre_stress.tolist(),
         "peak_to_peak_delta_sigma_xy_mpa": peak_to_peak.tolist(),
