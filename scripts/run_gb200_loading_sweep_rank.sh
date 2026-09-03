@@ -56,12 +56,12 @@ if [[ -f "$RUN_DIR/status.json" ]]; then
       }
       RESUME_ARGS=(--resume)
       ;;
-    failed)
+    failed|running)
       [[ -f "$RUN_DIR/checkpoint.npz" ]] || {
-        echo "$run_id failed and has no checkpoint to resume." >&2
+        echo "$run_id has status '$run_status' and no checkpoint to resume." >&2
         exit 1
       }
-      echo "$run_id failed after its last periodic checkpoint; resuming it."
+      echo "$run_id has status '$run_status' after an interrupted allocation; resuming it."
       RESUME_ARGS=(--resume)
       ;;
     *)

@@ -86,7 +86,7 @@ PY
 
 export ROOT ENV_PREFIX RUN_TIME_LIMIT_SECONDS MIN_FREE_BYTES
 set +e
-srun --exact --mpi=none --kill-on-bad-exit=0 \
+srun --exact --mpi=none --kill-on-bad-exit=0 --wait=0 \
   --nodes=4 --ntasks=16 --ntasks-per-node=4 --cpus-per-task=12 \
   --gpus-per-task=1 --gpu-bind=single:1 \
   bash -c '
