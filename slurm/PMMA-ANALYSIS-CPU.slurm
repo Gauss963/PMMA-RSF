@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-ROOT=/work1/gauss112/PMMA-RSF
+ROOT=/work1/gauss112/tatva
 RUN_DIR=${RUN_DIR:?Submit with --export=ALL,RUN_DIR=/path/to/TS####}
 PYTHON=/home/gauss112/.conda/envs/tatva/bin/python
 POSTPROCESS="$ROOT/scripts/postprocess_velocity_weakening_run.py"

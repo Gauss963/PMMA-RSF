@@ -165,6 +165,67 @@ def first_velocity_crossing(
     return arrivals
 
 
+def optional_linear_arrival_fit(
+    position_mm: np.ndarray,
+    arrival_time_ms: np.ndarray,
+    fit_start_mm: float,
+    fit_end_mm: float,
+) -> dict[str, object]:
+    fit_mask = (
+        (position_mm >= fit_start_mm)
+        & (position_mm <= fit_end_mm)
+        & np.isfinite(arrival_time_ms)
+    )
+    finite_point_count = int(np.count_nonzero(fit_mask))
+    if finite_point_count < 3:
+        return {
+            "available": False,
+            "finite_point_count": finite_point_count,
+            "reason": "fewer than three finite arrivals in the requested fit interval",
+            "mask": fit_mask,
+            "slope_ms_per_mm": None,
+            "intercept_ms": None,
+            "speed_m_per_s": None,
+            "r_squared": None,
+        }
+
+    fit = linear_arrival_fit(
+        position_mm,
+        arrival_time_ms,
+        fit_start_mm,
+        fit_end_mm,
+    )
+    return {
+        "available": True,
+        "finite_point_count": finite_point_count,
+        "reason": None,
+        **fit,
+    }
+
+
+def _available_fit_speeds(*fits: dict[str, object]) -> list[float]:
+    return [
+        float(fit["speed_m_per_s"])
+        for fit in fits
+        if bool(fit["available"])
+    ]
+
+
+def _serializable_fit(fit: dict[str, object]) -> dict[str, object]:
+    return {
+        key: fit[key]
+        for key in (
+            "available",
+            "finite_point_count",
+            "reason",
+            "slope_ms_per_mm",
+            "intercept_ms",
+            "speed_m_per_s",
+            "r_squared",
+        )
+    }
+
+
 def _zone_metadata(h5: h5py.File, contact_y: np.ndarray) -> dict[str, float]:
     spec = json.loads(str(h5.attrs.get("rsf_profile_spec_json", "{}")))
     y_min = float(np.min(contact_y))
@@ -276,14 +337,24 @@ def _plot_speed(
         label=rf"$|V|={high_threshold:g}$ mm s$^{{-1}}$",
     )
     fit_y = np.linspace(fit_start, fit_end, 300)
-    axis.plot(
-        fit_y,
-        float(low_fit["slope_ms_per_mm"]) * fit_y + float(low_fit["intercept_ms"]),
-        color=ORANGE,
-        lw=1.45,
-        ls=(0, (5, 3)),
-        label=f"Linear fit, {fit_start:.0f}-{fit_end:.0f} mm",
-    )
+    for threshold, fit, color, line_style in (
+        (low_threshold, low_fit, ORANGE, (0, (5, 3))),
+        (high_threshold, high_fit, GOLD, (0, (2, 2))),
+    ):
+        if not bool(fit["available"]):
+            continue
+        axis.plot(
+            fit_y,
+            float(fit["slope_ms_per_mm"]) * fit_y
+            + float(fit["intercept_ms"]),
+            color=color,
+            lw=1.35,
+            ls=line_style,
+            label=(
+                rf"Fit at {threshold:g} mm s$^{{-1}}$, "
+                f"{fit_start:.0f}-{fit_end:.0f} mm"
+            ),
+        )
     if np.isfinite(stop_time_ms):
         axis.axhline(
             stop_time_ms,
@@ -295,8 +366,9 @@ def _plot_speed(
     finite = np.concatenate(
         [low_arrival[np.isfinite(low_arrival)], high_arrival[np.isfinite(high_arrival)]]
     )
-    pad = max(0.05, 0.06 * float(np.ptp(finite)))
-    axis.set_ylim(float(np.min(finite)) - pad, float(np.max(finite)) + pad)
+    if finite.size:
+        pad = max(0.05, 0.06 * float(np.ptp(finite)))
+        axis.set_ylim(float(np.min(finite)) - pad, float(np.max(finite)) + pad)
     axis.set_xlim(zones["y_min"], zones["y_max"])
     axis.set_xlabel("Position along fault, y [mm]")
     axis.set_ylabel("Arrival time after shear phase begins [ms]")
@@ -306,17 +378,25 @@ def _plot_speed(
     axis.spines[["top", "right"]].set_visible(False)
     _panel_label(axis, "(a)")
 
-    low_speed = float(low_fit["speed_m_per_s"])
-    high_speed = float(high_fit["speed_m_per_s"])
-    measured = 0.5 * (low_speed + high_speed)
-    labels = [r"$v_r$", r"$c_R$", r"$c_s$", r"$c_p$"]
+    available_speeds = _available_fit_speeds(low_fit, high_fit)
+    labels = [r"$c_R$", r"$c_s$", r"$c_p$"]
     values = [
-        measured / 1e3,
         wave_speeds["c_r"] / 1e3,
         wave_speeds["c_s"] / 1e3,
         wave_speeds["c_p"] / 1e3,
     ]
-    colors = [ORANGE, GOLD, TEAL, NAVY]
+    colors = [GOLD, TEAL, NAVY]
+    if available_speeds:
+        representative_speed = float(np.mean(available_speeds))
+        measured_label = r"$v_r$"
+        if len(available_speeds) == 1:
+            available_threshold = (
+                low_threshold if bool(low_fit["available"]) else high_threshold
+            )
+            measured_label = rf"$v_r$ ({available_threshold:g})"
+        labels.insert(0, measured_label)
+        values.insert(0, representative_speed / 1e3)
+        colors.insert(0, ORANGE)
     positions = np.arange(len(values))
     speed_axis.hlines(positions, 0.0, values, color=colors, alpha=0.55, lw=2.1)
     speed_axis.scatter(values, positions, color=colors, s=25, zorder=3)
@@ -333,11 +413,19 @@ def _plot_speed(
     speed_axis.invert_yaxis()
     speed_axis.set_xlim(0.0, 1.12 * max(values))
     speed_axis.set_xlabel("Speed [km/s]")
+    fit_notes = []
+    for label, fit in (("low", low_fit), ("high", high_fit)):
+        if bool(fit["available"]):
+            fit_notes.append(
+                rf"$R^2_{{V_{{{label[0]}}}}}="
+                rf"{float(fit['r_squared']):.4f}$"
+            )
+        else:
+            fit_notes.append(
+                f"{label} fit unavailable (n={int(fit['finite_point_count'])})"
+            )
     speed_axis.set_title(
-        "Measured and material speeds\n"
-        rf"$v_r={measured / 1e3:.3f}$ km s$^{{-1}}$; "
-        rf"$R^2_{{V_l}}={float(low_fit['r_squared']):.4f}$, "
-        rf"$R^2_{{V_h}}={float(high_fit['r_squared']):.4f}$",
+        "Measured and material speeds\n" + "; ".join(fit_notes),
         loc="left",
         fontsize=8.2,
     )
@@ -560,8 +648,12 @@ def main() -> int:
         density = float(h5.attrs.get("density", h5.attrs.get("rho", 1.148e-9)))
         zones = _zone_metadata(h5, contact_y)
 
-    low_fit = linear_arrival_fit(contact_y, low_arrival, args.fit_start, args.fit_end)
-    high_fit = linear_arrival_fit(contact_y, high_arrival, args.fit_start, args.fit_end)
+    low_fit = optional_linear_arrival_fit(
+        contact_y, low_arrival, args.fit_start, args.fit_end
+    )
+    high_fit = optional_linear_arrival_fit(
+        contact_y, high_arrival, args.fit_start, args.fit_end
+    )
     wave_speeds = material_wave_speeds(young, poisson, density)
     speed_paths = _plot_speed(
         contact_y=contact_y,
@@ -595,40 +687,33 @@ def main() -> int:
         output_dir=output_dir,
         dpi=args.dpi,
     )
+    available_speeds = _available_fit_speeds(low_fit, high_fit)
+    stable_speed = (
+        float(np.mean(available_speeds)) if len(available_speeds) == 2 else None
+    )
+    representative_speed = (
+        float(np.mean(available_speeds)) if available_speeds else None
+    )
     payload = {
         "friction_law": friction_law,
         "fit_interval_mm": [args.fit_start, args.fit_end],
         "velocity_thresholds_mm_s": velocity_thresholds,
         "low_threshold_speed_m_per_s": low_fit["speed_m_per_s"],
         "high_threshold_speed_m_per_s": high_fit["speed_m_per_s"],
-        "stable_speed_m_per_s": 0.5
-        * (float(low_fit["speed_m_per_s"]) + float(high_fit["speed_m_per_s"])),
+        "stable_speed_m_per_s": stable_speed,
+        "representative_speed_m_per_s": representative_speed,
         "arrival_fits": {
-            "low_velocity_threshold": {
-                key: low_fit[key]
-                for key in (
-                    "slope_ms_per_mm",
-                    "intercept_ms",
-                    "speed_m_per_s",
-                    "r_squared",
-                )
-            },
-            "high_velocity_threshold": {
-                key: high_fit[key]
-                for key in (
-                    "slope_ms_per_mm",
-                    "intercept_ms",
-                    "speed_m_per_s",
-                    "r_squared",
-                )
-            },
+            "low_velocity_threshold": _serializable_fit(low_fit),
+            "high_velocity_threshold": _serializable_fit(high_fit),
         },
         "arrival_definition": (
-            "Mean of linear fits to the first crossings of two dynamic slip-rate "
-            "thresholds. The thresholds exceed the imposed loading velocity, so "
-            "quasistatic creep and later global peak-rate arrivals are excluded."
+            "Stable speed is the mean of linear fits to the first crossings of two "
+            "dynamic slip-rate thresholds when both fits are available. The "
+            "representative speed uses whichever threshold fits are available. "
+            "The thresholds exceed the imposed loading velocity, so quasistatic "
+            "creep and later global peak-rate arrivals are excluded."
         ),
-        "loading_stop_time_ms": stop_time_ms,
+        "loading_stop_time_ms": stop_time_ms if np.isfinite(stop_time_ms) else None,
         "wave_speeds_m_per_s": wave_speeds,
         "lsw_czm_prediction": "not applicable to this RSF run",
         "outputs": [

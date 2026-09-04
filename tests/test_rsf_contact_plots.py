@@ -12,8 +12,10 @@ sys.path.insert(0, str(PLOT_DIR))
 from plot_contact_friction_map import plot_mu_eff_maps  # noqa: E402
 from plot_contact_mu_disp import plot_contact_mu_disp  # noqa: E402
 from plot_rsf_rupture_analysis import (  # noqa: E402
+    _plot_speed,
     _zone_metadata,
     first_velocity_crossing,
+    optional_linear_arrival_fit,
 )
 
 
@@ -41,6 +43,65 @@ def test_first_velocity_crossing_interpolates_across_chunks(tmp_path):
         )
 
     assert arrivals == pytest.approx([1.5, 3.5])
+
+
+def test_optional_linear_arrival_fit_preserves_valid_fit():
+    position = np.asarray([100.0, 120.0, 200.0, 300.0, 440.0, 460.0])
+    arrival = 2.0 + 0.01 * position
+
+    fit = optional_linear_arrival_fit(position, arrival, 120.0, 440.0)
+
+    assert fit["available"] is True
+    assert fit["finite_point_count"] == 4
+    assert fit["speed_m_per_s"] == pytest.approx(100.0)
+    assert fit["r_squared"] == pytest.approx(1.0)
+
+
+def test_optional_linear_arrival_fit_reports_unreached_threshold():
+    position = np.asarray([120.0, 200.0, 300.0, 440.0])
+    arrival = np.asarray([2.0, np.nan, np.nan, 5.0])
+
+    fit = optional_linear_arrival_fit(position, arrival, 120.0, 440.0)
+
+    assert fit["available"] is False
+    assert fit["finite_point_count"] == 2
+    assert fit["speed_m_per_s"] is None
+    assert fit["r_squared"] is None
+    assert "fewer than three" in str(fit["reason"])
+
+
+def test_speed_plot_tolerates_one_unreached_threshold(tmp_path):
+    position = np.asarray([0.0, 120.0, 200.0, 300.0, 440.0, 500.0])
+    low_arrival = 2.0 + 0.01 * position
+    high_arrival = np.asarray([2.2, 3.4, np.nan, np.nan, np.nan, np.nan])
+    low_fit = optional_linear_arrival_fit(position, low_arrival, 120.0, 440.0)
+    high_fit = optional_linear_arrival_fit(position, high_arrival, 120.0, 440.0)
+    zones = {
+        "y_min": 0.0,
+        "y_max": 500.0,
+        "loading_end": 30.0,
+        "loading_transition_end": 80.0,
+        "leading_transition_start": 370.0,
+        "leading_start": 470.0,
+    }
+
+    paths = _plot_speed(
+        contact_y=position,
+        low_arrival=low_arrival,
+        high_arrival=high_arrival,
+        low_fit=low_fit,
+        high_fit=high_fit,
+        velocity_thresholds=(500.0, 1000.0),
+        fit_start=120.0,
+        fit_end=440.0,
+        stop_time_ms=3.0,
+        zones=zones,
+        wave_speeds={"c_r": 1000.0, "c_s": 1200.0, "c_p": 2400.0},
+        output_dir=tmp_path,
+        dpi=72,
+    )
+
+    assert all(path.exists() for path in paths)
 
 
 def test_zone_metadata_uses_independent_transition_lengths(tmp_path):
