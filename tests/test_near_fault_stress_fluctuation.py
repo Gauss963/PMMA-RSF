@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 from scripts.plot_near_fault_stress_fluctuation import (
+    bracketing_frame_range,
     piecewise_linear_window_mean,
     required_frame_time_bounds,
 )
@@ -73,3 +74,19 @@ def test_piecewise_linear_window_mean_rejects_uncovered_window() -> None:
             -0.1,
             0.5,
         )
+
+
+def test_bracketing_frame_range_includes_samples_outside_requested_bounds() -> None:
+    frame_indices = np.arange(2, 8, dtype=np.int64)
+    time = np.arange(10, dtype=np.float64)
+
+    frame_start, frame_stop = bracketing_frame_range(
+        frame_indices,
+        time,
+        3.2,
+        5.4,
+    )
+
+    assert (frame_start, frame_stop) == (3, 7)
+    assert time[frame_start] < 3.2
+    assert time[frame_stop - 1] > 5.4

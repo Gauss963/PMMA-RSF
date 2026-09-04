@@ -295,6 +295,37 @@ def piecewise_linear_window_mean(
     ) / (window_end - window_start)
 
 
+def bracketing_frame_range(
+    frame_indices: np.ndarray,
+    time: np.ndarray,
+    requested_start: float,
+    requested_end: float,
+) -> tuple[int, int]:
+    """Return a contiguous slice containing samples bracketing both endpoints."""
+    indices = np.asarray(frame_indices, dtype=np.int64)
+    sample_time = np.asarray(time, dtype=np.float64)[indices]
+    if len(indices) < 2 or np.any(np.diff(indices) != 1):
+        raise ValueError("At least two contiguous phase frames are required.")
+    if requested_start >= requested_end:
+        raise ValueError("Requested frame-time start must precede its end.")
+    if requested_start < sample_time[0] or requested_end > sample_time[-1]:
+        raise ValueError("Requested frame-time bounds exceed the saved phase.")
+
+    start_position = max(
+        0,
+        int(np.searchsorted(sample_time, requested_start, side="right")) - 1,
+    )
+    end_position = min(
+        len(indices) - 1,
+        int(np.searchsorted(sample_time, requested_end, side="left")),
+    )
+    frame_start = int(indices[start_position])
+    frame_stop = int(indices[end_position]) + 1
+    if frame_stop - frame_start < 2:
+        raise ValueError("Saved phase does not bracket the requested frame-time range.")
+    return frame_start, frame_stop
+
+
 def first_crossing_times(
     dataset: h5py.Dataset,
     frame_indices: np.ndarray,
@@ -1311,14 +1342,12 @@ def main() -> int:
             xi_max_mm=args.xi_max,
             residual_end_ms=residual_end_ms,
         )
-        needed = shear_indices[
-            (shear_time_ms[shear_indices] >= first_needed_time)
-            & (shear_time_ms[shear_indices] <= last_needed_time)
-        ]
-        if len(needed) < 2:
-            raise ValueError("No saved stress frames cover the requested xi range.")
-        frame_start = int(needed[0])
-        frame_stop = int(needed[-1]) + 1
+        frame_start, frame_stop = bracketing_frame_range(
+            shear_indices,
+            shear_time_ms,
+            first_needed_time,
+            last_needed_time,
+        )
         bulk_stress_flat = read_probe_stress(
             h5["moving/stress"],
             frame_start,

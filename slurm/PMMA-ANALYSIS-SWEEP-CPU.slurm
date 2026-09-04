@@ -80,7 +80,10 @@ EOF
     echo "Host=$(hostname) job=${SLURM_JOB_ID:-interactive}"
     echo "Animation and animation-frame rendering are disabled."
     set +e
-    /usr/bin/time -v "$PYTHON" "$POSTPROCESS" --input "$input" --dpi 260
+    /usr/bin/time -v "$PYTHON" "$POSTPROCESS" \
+      --input "$input" \
+      --dpi 260 \
+      --missing-only
     analysis_exit=$?
     set -e
     if [[ "$analysis_exit" -eq 0 ]]; then

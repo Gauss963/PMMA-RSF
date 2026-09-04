@@ -60,5 +60,8 @@ trap write_status EXIT
 
 echo "Analysis job ${SLURM_JOB_ID:-interactive} started at $started_at"
 echo "Host=$(hostname) allocated_cpus=${SLURM_CPUS_PER_TASK:-unset}"
-/usr/bin/time -v "$PYTHON" "$POSTPROCESS" --input "$INPUT" --dpi 260
+/usr/bin/time -v "$PYTHON" "$POSTPROCESS" \
+  --input "$INPUT" \
+  --dpi 260 \
+  --missing-only
 echo "Analysis completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)"

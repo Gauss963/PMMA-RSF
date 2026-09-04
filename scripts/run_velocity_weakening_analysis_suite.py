@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import shlex
-import subprocess
 import sys
 from pathlib import Path
 
 import h5py
 import numpy as np
+
+from analysis_orchestration import run_subprocess_task
 
 
 SRC_DIR = Path(__file__).resolve().parent
@@ -24,6 +24,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fit-start", type=float, default=120.0)
     parser.add_argument("--fit-end", type=float, default=440.0)
     parser.add_argument("--dpi", type=int, default=260)
+    parser.add_argument(
+        "--missing-only",
+        action="store_true",
+        help="Skip analysis tasks whose complete output set already exists.",
+    )
     return parser.parse_args()
 
 
@@ -133,11 +138,6 @@ def resolved_fit_interval(
     return start_mm + 0.20 * span, start_mm + 0.85 * span
 
 
-def run_command(command: list[str]) -> None:
-    print(f"\nRunning:\n{shlex.join(command)}", flush=True)
-    subprocess.run(command, cwd=SRC_DIR.parent, check=True)
-
-
 def python_command(script: str, *arguments: object) -> list[str]:
     return [
         sys.executable,
@@ -193,6 +193,11 @@ def sigma_trace_command(
     return [str(value) for value in command]
 
 
+def output_pair(path: Path) -> tuple[Path, Path]:
+    stem = path.with_suffix("") if path.suffix else path
+    return stem.with_suffix(".png"), stem.with_suffix(".pdf")
+
+
 def main() -> int:
     args = parse_args()
     data_path = args.input.expanduser().resolve()
@@ -226,65 +231,102 @@ def main() -> int:
         if str(rupture["friction_law"]).startswith("rate-state")
         else "plot_rupture_speed_and_fault_profile.py"
     )
-    commands = [
-        python_command(
-            rupture_script,
-            data_path,
-            "--output-dir",
-            plot_dir,
-            "--fit-start",
-            fit_start,
-            "--fit-end",
-            fit_end,
-            "--dpi",
-            args.dpi,
+    commands: list[tuple[str, list[str], list[Path]]] = [
+        (
+            "rupture_speed_and_rsf_profiles",
+            python_command(
+                rupture_script,
+                data_path,
+                "--output-dir",
+                plot_dir,
+                "--fit-start",
+                fit_start,
+                "--fit-end",
+                fit_end,
+                "--dpi",
+                args.dpi,
+            ),
+            [
+                *output_pair(plot_dir / "rupture_speed_stable_fit.png"),
+                *output_pair(plot_dir / "fault_interface_profile.png"),
+                *output_pair(plot_dir / "rsf_mechanism.png"),
+                plot_dir / "rsf_rupture_analysis_metrics.json",
+            ],
         ),
-        python_command(
-            "plot_interface_stress_slip.py",
-            data_path,
-            "--output",
-            plot_dir / "interface_stress_slip_selected_points.png",
-            *y_point_args,
-            "--dpi",
-            args.dpi,
+        (
+            "interface_stress_slip",
+            python_command(
+                "plot_interface_stress_slip.py",
+                data_path,
+                "--output",
+                plot_dir / "interface_stress_slip_selected_points.png",
+                *y_point_args,
+                "--dpi",
+                args.dpi,
+            ),
+            list(output_pair(plot_dir / "interface_stress_slip_selected_points.png")),
         ),
-        python_command(
-            "plot_near_fault_stress_fluctuation.py",
-            data_path,
-            "--output-dir",
-            plot_dir,
-            *station_args,
-            "--fit-start",
-            fit_start,
-            "--fit-end",
-            fit_end,
-            "--off-fault-distances",
-            *DEFAULT_DISTANCES,
-            "--dpi",
-            args.dpi,
+        (
+            "near_fault_stress_fluctuation",
+            python_command(
+                "plot_near_fault_stress_fluctuation.py",
+                data_path,
+                "--output-dir",
+                plot_dir,
+                *station_args,
+                "--fit-start",
+                fit_start,
+                "--fit-end",
+                fit_end,
+                "--off-fault-distances",
+                *DEFAULT_DISTANCES,
+                "--dpi",
+                args.dpi,
+            ),
+            [
+                *output_pair(plot_dir / "near_fault_stress_fluctuation_by_station.png"),
+                *output_pair(plot_dir / "near_fault_stress_fluctuation_collapse.png"),
+                *output_pair(plot_dir / "near_fault_on_fault_triangle_zoom.png"),
+                plot_dir / "near_fault_stress_fluctuation_metrics.json",
+            ],
         ),
-        python_command(
-            "plot_on_fault_slip_stress_rates.py",
-            "--input",
-            data_path,
-            "--output",
-            plot_dir / "on_fault_slip_stress_rates_by_station.png",
-            "--output-metrics",
-            plot_dir / "on_fault_slip_stress_rates_by_station_metrics.json",
-            *y_point_args,
-            "--dpi",
-            args.dpi,
+        (
+            "on_fault_slip_stress_rates",
+            python_command(
+                "plot_on_fault_slip_stress_rates.py",
+                "--input",
+                data_path,
+                "--output",
+                plot_dir / "on_fault_slip_stress_rates_by_station.png",
+                "--output-metrics",
+                plot_dir / "on_fault_slip_stress_rates_by_station_metrics.json",
+                *y_point_args,
+                "--dpi",
+                args.dpi,
+            ),
+            [
+                *output_pair(plot_dir / "on_fault_slip_stress_rates_by_station.png"),
+                plot_dir / "on_fault_slip_stress_rates_by_station_metrics.json",
+            ],
         ),
-        sigma_trace_command(
-            data_path=data_path,
-            plot_dir=plot_dir,
-            stem="near_fault_delta_tau_time_by_station_5mm",
-            layout_stem="near_fault_delta_tau_probe_layout_5mm",
-            stations=stations,
-            distances=DEFAULT_DISTANCES,
-            baseline_mode="residual",
-            time_origin="shear-start",
-            dpi=args.dpi,
+        (
+            "near_fault_delta_tau_time_by_station_5mm",
+            sigma_trace_command(
+                data_path=data_path,
+                plot_dir=plot_dir,
+                stem="near_fault_delta_tau_time_by_station_5mm",
+                layout_stem="near_fault_delta_tau_probe_layout_5mm",
+                stations=stations,
+                distances=DEFAULT_DISTANCES,
+                baseline_mode="residual",
+                time_origin="shear-start",
+                dpi=args.dpi,
+            ),
+            [
+                *output_pair(plot_dir / "near_fault_delta_tau_time_by_station_5mm.png"),
+                *output_pair(plot_dir / "near_fault_delta_tau_probe_layout_5mm.png"),
+                plot_dir / "near_fault_delta_tau_time_by_station_5mm_metrics.json",
+            ],
         ),
     ]
 
@@ -307,25 +349,46 @@ def main() -> int:
                 if suffix == ""
                 else None
             )
+            expected_outputs = [
+                *output_pair(plot_dir / f"{stem}.png"),
+                plot_dir / f"{stem}_metrics.json",
+            ]
+            if layout is not None:
+                expected_outputs.extend(output_pair(plot_dir / f"{layout}.png"))
             commands.append(
-                sigma_trace_command(
-                    data_path=data_path,
-                    plot_dir=plot_dir,
-                    stem=stem,
-                    layout_stem=layout,
-                    stations=stations,
-                    distances=distances,
-                    baseline_mode="pre-event",
-                    time_origin="local-tip",
-                    time_scale=scale,
-                    time_start_ms=start,
-                    time_end_ms=end,
-                    dpi=args.dpi,
+                (
+                    stem,
+                    sigma_trace_command(
+                        data_path=data_path,
+                        plot_dir=plot_dir,
+                        stem=stem,
+                        layout_stem=layout,
+                        stations=stations,
+                        distances=distances,
+                        baseline_mode="pre-event",
+                        time_origin="local-tip",
+                        time_scale=scale,
+                        time_start_ms=start,
+                        time_end_ms=end,
+                        dpi=args.dpi,
+                    ),
+                    expected_outputs,
                 )
             )
 
-    for command in commands:
-        run_command([str(value) for value in command])
+    task_results = [
+        run_subprocess_task(
+            name,
+            command,
+            expected_outputs=expected_outputs,
+            cwd=SRC_DIR.parent,
+            missing_only=args.missing_only,
+        )
+        for name, command, expected_outputs in commands
+    ]
+    failed_tasks = [
+        task["name"] for task in task_results if task["status"] == "failed"
+    ]
 
     summary = {
         "input": str(data_path),
@@ -336,7 +399,16 @@ def main() -> int:
             float(args.fit_end),
         ],
         "rupture_speed_fit_interval_mm": [fit_start, fit_end],
-        "commands_completed": len(commands),
+        "status": "complete" if not failed_tasks else "complete_with_failures",
+        "commands_total": len(commands),
+        "commands_completed": sum(
+            task["status"] == "completed" for task in task_results
+        ),
+        "commands_skipped_existing": sum(
+            task["status"] == "skipped_existing" for task in task_results
+        ),
+        "failed_tasks": failed_tasks,
+        "tasks": task_results,
     }
     summary_path = plot_dir / "analysis_suite_summary.json"
     summary_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
