@@ -61,6 +61,10 @@ SHEAR_RATE_SWEEP_CASES = [
     ROOT / "cases" / f"rsf_{run:04d}_shear_rate_{index:02d}.toml"
     for index, run in enumerate(range(144, 160), start=1)
 ]
+LEADING_EDGE_SWEEP_CASES = [
+    ROOT / "cases" / f"rsf_{run:04d}_leading_interp_{index:02d}.toml"
+    for index, run in enumerate(range(160, 176), start=1)
+]
 
 
 def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
@@ -188,6 +192,59 @@ def test_shear_rate_sweep_changes_only_ramp_time_and_reduces_frames():
         assert config.name == (
             f"pmma-rsf-{143 + index:04d}-shear-rate-{index:02d}of16"
         )
+
+
+def test_leading_edge_sweep_combines_ts0159_rate_with_ts0143_loading_end():
+    rate_reference = load_case_config(SHEAR_RATE_SWEEP_CASES[-1])
+    loading_reference = load_case_config(LOADING_SWEEP_CASES[-1])
+    baseline = asdict(rate_reference)
+    baseline["name"] = "normalized"
+    baseline["rsf"]["loading"] = asdict(loading_reference.rsf.loading)
+
+    for index, path in enumerate(LEADING_EDGE_SWEEP_CASES, start=1):
+        config = load_case_config(path)
+        if index <= 8:
+            fraction = (index - 1) / 7.0
+            expected_a = 0.008 + fraction * (0.005 - 0.008)
+            expected_b = 0.005
+        else:
+            fraction = (index - 8) / 8.0
+            expected_a = 0.005
+            expected_b = 0.005 + fraction * (0.025819400653936703 - 0.005)
+
+        payload = asdict(config)
+        leading = payload["rsf"]["leading"]
+        assert leading["direct_effect"] == pytest.approx(expected_a)
+        assert leading["state_effect"] == pytest.approx(expected_b)
+        payload["name"] = "normalized"
+        payload["rsf"]["leading"] = baseline["rsf"]["leading"]
+        assert payload == baseline
+        assert config.rsf.loading == loading_reference.rsf.loading
+        assert config.rsf.loading == config.rsf.middle
+        assert config.loading.shear_ramp_time == pytest.approx(0.025)
+        assert config.name == (
+            f"pmma-rsf-{159 + index:04d}-leading-ab-{index:02d}of16"
+        )
+
+    assert load_case_config(LEADING_EDGE_SWEEP_CASES[7]).rsf.leading.direct_effect == (
+        pytest.approx(0.005)
+    )
+    assert load_case_config(LEADING_EDGE_SWEEP_CASES[7]).rsf.leading.state_effect == (
+        pytest.approx(0.005)
+    )
+    final_config = load_case_config(LEADING_EDGE_SWEEP_CASES[-1])
+    assert final_config.rsf.leading.direct_effect == (
+        final_config.rsf.middle.direct_effect
+    )
+    assert final_config.rsf.leading.state_effect == (
+        final_config.rsf.middle.state_effect
+    )
+    assert final_config.rsf.leading.characteristic_slip == (
+        final_config.rsf.middle.characteristic_slip
+    )
+    assert final_config.rsf.leading.reference_friction == (
+        final_config.rsf.initial_friction
+    )
 
 
 def test_storage_preflight_uses_uncompressed_remaining_size_and_reserve(
