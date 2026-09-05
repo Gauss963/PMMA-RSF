@@ -188,3 +188,12 @@ shear-frame targets, giving an estimated 0.0871 TB per run and 1.394 TB for
 the complete sweep. The committed cases are generated and verified by
 `scripts/generate_shear_rate_sweep_cases.py`; the GB200-r1 launcher assigns
 one independent case to each of 16 GPUs without MPI.
+
+TS0176 through TS0191 form a second controlled ramp-duration sweep based
+exactly on TS0163. Geometry, material, the TS0163 loading/middle/leading RSF
+profile, 2.45 mm target displacement, 75 ms shear phase, 10 ns time step,
+rupture-stop rule, and output sampling are unchanged. Only the half-cosine
+`shear_ramp_time` is linearly spaced from 25 to 75 ms in 16 values. Thus the
+available post-ramp hold decreases from 50 to 0 ms while total simulated shear
+time remains fixed. The GB200-r1 launcher runs 16 independent, non-MPI tasks,
+with exactly one GPU assigned to each case.

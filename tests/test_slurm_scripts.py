@@ -15,6 +15,7 @@ def test_non_gb200_slurm_scripts_leave_memory_allocation_to_scheduler():
         "PMMA-GB200-SETUP.slurm",
         "PMMA-RSF-GB200.slurm",
         "PMMA-RSF-GB200-R1-LEADING-EDGE-SWEEP.slurm",
+        "PMMA-RSF-GB200-R1-RAMP-TIME-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-SHEAR-RATE-SWEEP.slurm",
     }
@@ -187,6 +188,35 @@ def test_gb200_leading_edge_sweep_uses_independent_single_gpu_tasks():
     assert "config.loading.shear_ramp_time - 0.025" in content
 
     assert "run_number=$((159 + SWEEP_INDEX))" in rank_runner
+    assert 'RUN_DIR="$ROOT/runs/$run_id"' in rank_runner
+    assert "tatva.pmma.mpi" not in rank_runner
+    assert "mpi4py" not in rank_runner
+    assert "XLA_PYTHON_CLIENT_MEM_FRACTION=0.90" in rank_runner
+    assert "XLA_FLAGS=--xla_gpu_enable_command_buffer=" in rank_runner
+    assert "refusing automatic HDF5 resume" in rank_runner
+
+
+def test_gb200_ts0163_ramp_time_sweep_uses_independent_single_gpu_tasks():
+    content = (
+        ROOT / "slurm/PMMA-RSF-GB200-R1-RAMP-TIME-SWEEP.slurm"
+    ).read_text(encoding="utf-8")
+    rank_runner = (
+        ROOT / "scripts/run_gb200_ts0163_ramp_time_sweep_rank.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "#SBATCH --partition=gb200-r1" in content
+    assert "#SBATCH --nodes=4" in content
+    assert "#SBATCH --ntasks=16" in content
+    assert "#SBATCH --ntasks-per-node=4" in content
+    assert "#SBATCH --gres=gpu:4" in content
+    assert "#SBATCH --time=16:00:00" in content
+    assert "--mpi=none" in content
+    assert "--gpus-per-task=1" in content
+    assert "generate_ts0163_ramp_time_sweep_cases.py --check" in content
+    assert "range(176, 192)" in content
+    assert "expected_ramp = ramp_time(index)" in content
+
+    assert "run_number=$((175 + SWEEP_INDEX))" in rank_runner
     assert 'RUN_DIR="$ROOT/runs/$run_id"' in rank_runner
     assert "tatva.pmma.mpi" not in rank_runner
     assert "mpi4py" not in rank_runner

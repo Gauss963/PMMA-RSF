@@ -65,6 +65,10 @@ LEADING_EDGE_SWEEP_CASES = [
     ROOT / "cases" / f"rsf_{run:04d}_leading_interp_{index:02d}.toml"
     for index, run in enumerate(range(160, 176), start=1)
 ]
+TS0163_RAMP_TIME_SWEEP_CASES = [
+    ROOT / "cases" / f"rsf_{run:04d}_ramp_time_{index:02d}.toml"
+    for index, run in enumerate(range(176, 192), start=1)
+]
 
 
 def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
@@ -245,6 +249,29 @@ def test_leading_edge_sweep_combines_ts0159_rate_with_ts0143_loading_end():
     assert final_config.rsf.leading.reference_friction == (
         final_config.rsf.initial_friction
     )
+
+
+def test_ts0163_ramp_time_sweep_changes_only_ramp_duration():
+    baseline = load_case_config(LEADING_EDGE_SWEEP_CASES[3])
+    normalized_baseline = asdict(baseline)
+    normalized_baseline["name"] = "normalized"
+    normalized_baseline["loading"].pop("shear_ramp_time")
+
+    for index, path in enumerate(TS0163_RAMP_TIME_SWEEP_CASES, start=1):
+        config = load_case_config(path)
+        expected_ramp = 0.025 + (index - 1) * (0.075 - 0.025) / 15.0
+        payload = asdict(config)
+        ramp_time = payload["loading"].pop("shear_ramp_time")
+        payload["name"] = "normalized"
+
+        assert payload == normalized_baseline
+        assert ramp_time == pytest.approx(expected_ramp)
+        assert ramp_time <= config.loading.shear_phase_time
+        assert config.loading.shear_phase_time == pytest.approx(0.075)
+        assert config.loading.shear_displacement_final == pytest.approx(2.45)
+        assert config.name == (
+            f"pmma-rsf-{175 + index:04d}-ramp-time-{index:02d}of16"
+        )
 
 
 def test_storage_preflight_uses_uncompressed_remaining_size_and_reserve(
