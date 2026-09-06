@@ -69,6 +69,10 @@ TS0163_RAMP_TIME_SWEEP_CASES = [
     ROOT / "cases" / f"rsf_{run:04d}_ramp_time_{index:02d}.toml"
     for index, run in enumerate(range(176, 192), start=1)
 ]
+TS0163_CHAMFER_DEPTH_SWEEP_CASES = [
+    ROOT / "cases" / f"rsf_{run:04d}_chamfer_depth_{index:02d}.toml"
+    for index, run in enumerate(range(192, 208), start=1)
+]
 
 
 def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
@@ -271,6 +275,41 @@ def test_ts0163_ramp_time_sweep_changes_only_ramp_duration():
         assert config.loading.shear_displacement_final == pytest.approx(2.45)
         assert config.name == (
             f"pmma-rsf-{175 + index:04d}-ramp-time-{index:02d}of16"
+        )
+
+
+def test_ts0163_chamfer_depth_sweep_changes_only_geometry_depth_and_endpoint():
+    baseline = load_case_config(LEADING_EDGE_SWEEP_CASES[3])
+    normalized_baseline = asdict(baseline)
+    normalized_baseline["name"] = "normalized"
+    normalized_baseline["moving"].pop("leading_chamfer_along_fault")
+    normalized_baseline["moving"].pop("leading_chamfer_perpendicular")
+    normalized_baseline["loading"].pop("stop_max_y")
+
+    for index, path in enumerate(TS0163_CHAMFER_DEPTH_SWEEP_CASES, start=1):
+        config = load_case_config(path)
+        expected_depth = 8.0 * (index - 1) / 15.0
+        payload = asdict(config)
+        chamfer_length = payload["moving"].pop("leading_chamfer_along_fault")
+        chamfer_depth = payload["moving"].pop("leading_chamfer_perpendicular")
+        stop_max_y = payload["loading"].pop("stop_max_y")
+        payload["name"] = "normalized"
+
+        assert payload == normalized_baseline
+        assert chamfer_depth == pytest.approx(expected_depth)
+        assert chamfer_length == pytest.approx(0.0 if index == 1 else 20.0)
+        assert stop_max_y == pytest.approx(499.0 if index == 1 else 479.0)
+        estimate = estimate_case_size(config)
+        assert estimate["active_fault_length_mm"] == pytest.approx(
+            500.0 if index == 1 else 480.0
+        )
+        assert (
+            estimate["estimated_uncompressed_tb"]
+            * config.output.estimated_compression_ratio
+            < config.output.maximum_dump_tb
+        )
+        assert config.name == (
+            f"pmma-rsf-{191 + index:04d}-chamfer-depth-{index:02d}of16"
         )
 
 

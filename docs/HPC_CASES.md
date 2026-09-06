@@ -197,3 +197,12 @@ rupture-stop rule, and output sampling are unchanged. Only the half-cosine
 available post-ramp hold decreases from 50 to 0 ms while total simulated shear
 time remains fixed. The GB200-r1 launcher runs 16 independent, non-MPI tasks,
 with exactly one GPU assigned to each case.
+
+TS0192 through TS0207 isolate the moving-block leading chamfer depth while
+retaining the complete TS0163 material, loading, RSF, numerics, and output
+configuration. The perpendicular depth is linearly spaced from 0 to 8 mm in
+16 values. Positive-depth cases keep the 20 mm along-fault chamfer length and
+the 479 mm rupture-coverage endpoint. TS0192 is the exact zero-depth control:
+both chamfer dimensions are zero, the full 500 mm fault is active, and its
+equivalent full-contact rupture endpoint is 499 mm. This avoids representing
+the no-chamfer control with an artificial nonzero depth.
