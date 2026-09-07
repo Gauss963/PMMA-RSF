@@ -28,6 +28,8 @@ class MaterialConfig:
 class LoadingConfig:
     normal_stress_reference: float
     normal_displacement: float
+    normal_displacement_loading_fraction: float
+    normal_displacement_leading_fraction: float
     normal_phase_time: float
     normal_ramp_time: float
     shear_displacement_initial: float
@@ -201,6 +203,12 @@ def load_case_config(path: str | Path) -> PMMACaseConfig:
         loading=LoadingConfig(
             normal_stress_reference=float(loading["normal_stress_reference"]),
             normal_displacement=float(loading["normal_displacement"]),
+            normal_displacement_loading_fraction=float(
+                loading.get("normal_displacement_loading_fraction", 1.0)
+            ),
+            normal_displacement_leading_fraction=float(
+                loading.get("normal_displacement_leading_fraction", 1.0)
+            ),
             normal_phase_time=float(loading["normal_phase_time"]),
             normal_ramp_time=float(loading["normal_ramp_time"]),
             shear_displacement_initial=float(loading["shear_displacement_initial"]),
@@ -391,6 +399,17 @@ def _validate(config: PMMACaseConfig) -> None:
         raise ValueError("shear_ramp_time cannot exceed shear_phase_time.")
     if config.loading.normal_ramp_time > config.loading.normal_phase_time:
         raise ValueError("normal_ramp_time cannot exceed normal_phase_time.")
+    normal_displacement_fractions = (
+        config.loading.normal_displacement_loading_fraction,
+        config.loading.normal_displacement_leading_fraction,
+    )
+    if any(
+        not math.isfinite(value) or value <= 0.0
+        for value in normal_displacement_fractions
+    ):
+        raise ValueError(
+            "normal displacement loading/leading fractions must be finite and positive."
+        )
     if config.loading.stop_slip <= 0.0:
         raise ValueError("loading.stop_slip must be positive.")
     if (

@@ -206,3 +206,15 @@ the 479 mm rupture-coverage endpoint. TS0192 is the exact zero-depth control:
 both chamfer dimensions are zero, the full 500 mm fault is active, and its
 equivalent full-contact rupture endpoint is 499 mm. This avoids representing
 the no-chamfer control with an artificial nonzero depth.
+
+TS0208 through TS0223 isolate a linear normal-displacement dip on the original
+TS0163 loading face. All cases use the full rectangular moving block and a
+75 ms half-cosine shear-displacement ramp. At TS0208, the prescribed normal
+displacement increases linearly from 90% at the loading end (y=0) to 110% at
+the leading edge (y=500 mm). The two endpoint multipliers then interpolate in
+opposite directions until TS0223 reaches 110% at the loading end and 90% at
+the leading edge. Their mean remains exactly 100%, separating the effect of
+the normal-load gradient from a change in mean compression. Material, RSF,
+normal-loading time history, shear target, numerics, and output sampling are
+otherwise inherited from TS0163. The complete unchamfered fault is monitored
+through y=499 mm.

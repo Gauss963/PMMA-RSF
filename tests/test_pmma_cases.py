@@ -73,6 +73,10 @@ TS0163_CHAMFER_DEPTH_SWEEP_CASES = [
     ROOT / "cases" / f"rsf_{run:04d}_chamfer_depth_{index:02d}.toml"
     for index, run in enumerate(range(192, 208), start=1)
 ]
+TS0163_NORMAL_DIP_SWEEP_CASES = [
+    ROOT / "cases" / f"rsf_{run:04d}_normal_dip_{index:02d}.toml"
+    for index, run in enumerate(range(208, 224), start=1)
+]
 
 
 def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
@@ -311,6 +315,194 @@ def test_ts0163_chamfer_depth_sweep_changes_only_geometry_depth_and_endpoint():
         assert config.name == (
             f"pmma-rsf-{191 + index:04d}-chamfer-depth-{index:02d}of16"
         )
+
+
+def test_ts0163_normal_dip_sweep_changes_only_requested_loading_and_geometry():
+    baseline = load_case_config(LEADING_EDGE_SWEEP_CASES[3])
+    normalized_baseline = asdict(baseline)
+    normalized_baseline["name"] = "normalized"
+    normalized_baseline["moving"].pop("leading_chamfer_along_fault")
+    normalized_baseline["moving"].pop("leading_chamfer_perpendicular")
+    normalized_baseline["loading"].pop("normal_displacement_loading_fraction")
+    normalized_baseline["loading"].pop("normal_displacement_leading_fraction")
+    normalized_baseline["loading"].pop("shear_ramp_time")
+    normalized_baseline["loading"].pop("stop_max_y")
+
+    for index, path in enumerate(TS0163_NORMAL_DIP_SWEEP_CASES, start=1):
+        config = load_case_config(path)
+        fraction = (index - 1) / 15.0
+        expected_loading = 0.90 + 0.20 * fraction
+        expected_leading = 1.10 - 0.20 * fraction
+        payload = asdict(config)
+        chamfer_length = payload["moving"].pop("leading_chamfer_along_fault")
+        chamfer_depth = payload["moving"].pop("leading_chamfer_perpendicular")
+        loading_fraction = payload["loading"].pop(
+            "normal_displacement_loading_fraction"
+        )
+        leading_fraction = payload["loading"].pop(
+            "normal_displacement_leading_fraction"
+        )
+        shear_ramp_time = payload["loading"].pop("shear_ramp_time")
+        stop_max_y = payload["loading"].pop("stop_max_y")
+        payload["name"] = "normalized"
+
+        assert payload == normalized_baseline
+        assert chamfer_length == pytest.approx(0.0)
+        assert chamfer_depth == pytest.approx(0.0)
+        assert loading_fraction == pytest.approx(expected_loading)
+        assert leading_fraction == pytest.approx(expected_leading)
+        assert 0.5 * (loading_fraction + leading_fraction) == pytest.approx(1.0)
+        assert shear_ramp_time == pytest.approx(0.075)
+        assert stop_max_y == pytest.approx(499.0)
+        assert config.name == f"pmma-rsf-{207 + index:04d}-normal-dip-{index:02d}of16"
+        run_config = make_run_config(config)
+        assert run_config.normal_displacement_loading_fraction == pytest.approx(
+            expected_loading
+        )
+        assert run_config.normal_displacement_leading_fraction == pytest.approx(
+            expected_leading
+        )
+        estimate = estimate_case_size(config)
+        assert estimate["active_fault_length_mm"] == pytest.approx(500.0)
+        assert (
+            estimate["estimated_uncompressed_tb"]
+            * config.output.estimated_compression_ratio
+            < config.output.maximum_dump_tb
+        )
+
+
+def test_normal_dip_profile_is_linear_on_the_normal_loading_face():
+    from dataclasses import replace
+
+    config = load_case_config(TS0163_NORMAL_DIP_SWEEP_CASES[0])
+    coarse = replace(
+        config,
+        numerics=replace(config.numerics, mesh_size=50.0, time_step=None),
+        loading=replace(
+            config.loading,
+            normal_phase_time=2.0e-5,
+            normal_ramp_time=1.0e-5,
+            shear_phase_time=2.0e-5,
+            shear_ramp_time=1.0e-5,
+            stop_on_rupture=False,
+        ),
+    )
+    model = build_case_model(make_case(coarse), make_run_config(coarse))
+    y = np.asarray(model["moving_normal_edge_y"], dtype=np.float64)
+    profile = np.asarray(model["normal_displacement_profile"], dtype=np.float64)
+    order = np.argsort(y)
+
+    np.testing.assert_allclose(
+        profile[order],
+        0.90 + 0.20 * y[order] / 500.0,
+        rtol=2.0e-7,
+        atol=1.0e-7,
+    )
+    assert y[order][0] == pytest.approx(0.0)
+    assert y[order][-1] == pytest.approx(500.0)
+    assert profile[order][0] == pytest.approx(0.90)
+    assert profile[order][-1] == pytest.approx(1.10)
+
+
+def test_normal_dip_is_applied_to_dumped_loading_face_displacement(tmp_path):
+    from dataclasses import replace
+
+    config = load_case_config(TS0163_NORMAL_DIP_SWEEP_CASES[0])
+    config = replace(
+        config,
+        numerics=replace(config.numerics, mesh_size=100.0, cfl=0.2, time_step=None),
+        loading=replace(
+            config.loading,
+            normal_phase_time=2.0e-5,
+            normal_ramp_time=1.0e-5,
+            shear_phase_time=2.0e-5,
+            shear_ramp_time=1.0e-5,
+            normal_displacement=1.0e-3,
+            shear_displacement_final=1.0e-3,
+            stop_on_rupture=False,
+        ),
+    )
+    output = tmp_path / "normal-dip.h5"
+
+    result = run_simulation_dumped(
+        make_case(config),
+        make_run_config(config),
+        output,
+        frames_per_phase=2,
+        shear_frames_per_phase=2,
+        interface_frames_per_phase=2,
+        shear_interface_frames_per_phase=2,
+        include_initial_frame=False,
+        store_bulk_strain=False,
+        store_bulk_velocity=False,
+    )
+
+    with h5py.File(output, "r") as h5:
+        y = np.asarray(h5["normal_loading/boundary_y"], dtype=np.float64)
+        profile = np.asarray(
+            h5["normal_loading/displacement_fraction_profile"], dtype=np.float64
+        )
+        target = np.asarray(
+            h5["normal_loading/target_displacement_profile"], dtype=np.float64
+        )
+        moving_coords = np.asarray(h5["moving/coords"], dtype=np.float64)
+        moving_displacement = np.asarray(
+            h5["moving/displacement"][-1], dtype=np.float64
+        )
+        loading_nodes = np.flatnonzero(np.isclose(moving_coords[:, 0], 0.0))
+        order = np.argsort(moving_coords[loading_nodes, 1])
+
+        np.testing.assert_allclose(target, 1.0e-3 * profile, rtol=1.0e-6)
+        np.testing.assert_allclose(
+            moving_displacement[loading_nodes[order], 0],
+            target[np.argsort(y)],
+            rtol=1.0e-6,
+            atol=1.0e-9,
+        )
+        assert h5.attrs["normal_displacement_loading_fraction"] == pytest.approx(0.90)
+        assert h5.attrs["normal_displacement_leading_fraction"] == pytest.approx(1.10)
+    assert result["summary"]["normal_displacement_loading_fraction"] == pytest.approx(
+        0.90
+    )
+    assert result["summary"]["normal_displacement_leading_fraction"] == pytest.approx(
+        1.10
+    )
+
+
+def test_normal_dip_profile_preserves_stress_controlled_normal_loading(tmp_path):
+    from dataclasses import replace
+
+    config = load_case_config(TS0163_NORMAL_DIP_SWEEP_CASES[0])
+    config = replace(
+        config,
+        numerics=replace(config.numerics, mesh_size=100.0, cfl=0.2, time_step=None),
+        loading=replace(
+            config.loading,
+            normal_phase_time=2.0e-5,
+            normal_ramp_time=1.0e-5,
+            shear_phase_time=2.0e-5,
+            shear_ramp_time=1.0e-5,
+            shear_displacement_final=1.0e-3,
+            stop_on_rupture=False,
+        ),
+    )
+    run_config = replace(make_run_config(config), normal_loading_mode="stress")
+
+    result = run_simulation_dumped(
+        make_case(config),
+        run_config,
+        tmp_path / "normal-stress.h5",
+        frames_per_phase=2,
+        shear_frames_per_phase=2,
+        interface_frames_per_phase=2,
+        shear_interface_frames_per_phase=2,
+        include_initial_frame=False,
+        store_bulk_strain=False,
+        store_bulk_velocity=False,
+    )
+
+    assert result["summary"]["normal_loading_mode"] == "stress"
+    assert result["summary"]["saved_frames"] == 4
 
 
 def test_storage_preflight_uses_uncompressed_remaining_size_and_reserve(
