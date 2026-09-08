@@ -77,6 +77,10 @@ TS0163_NORMAL_DIP_SWEEP_CASES = [
     ROOT / "cases" / f"rsf_{run:04d}_normal_dip_{index:02d}.toml"
     for index, run in enumerate(range(208, 224), start=1)
 ]
+TS0163_NORMAL_DIP20_OUTER_SWEEP_CASES = [
+    ROOT / "cases" / f"rsf_{run:04d}_normal_dip20_outer_{index:02d}.toml"
+    for index, run in enumerate(range(224, 240), start=1)
+]
 
 
 def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
@@ -369,6 +373,80 @@ def test_ts0163_normal_dip_sweep_changes_only_requested_loading_and_geometry():
             * config.output.estimated_compression_ratio
             < config.output.maximum_dump_tb
         )
+
+
+def test_ts0163_normal_dip20_outer_sweep_adds_only_new_outer_dips():
+    baseline = load_case_config(LEADING_EDGE_SWEEP_CASES[3])
+    normalized_baseline = asdict(baseline)
+    normalized_baseline["name"] = "normalized"
+    normalized_baseline["moving"].pop("leading_chamfer_along_fault")
+    normalized_baseline["moving"].pop("leading_chamfer_perpendicular")
+    normalized_baseline["loading"].pop("normal_displacement_loading_fraction")
+    normalized_baseline["loading"].pop("normal_displacement_leading_fraction")
+    normalized_baseline["loading"].pop("shear_ramp_time")
+    normalized_baseline["loading"].pop("stop_max_y")
+    completed_pairs = {
+        (
+            round(0.90 + 0.20 * (index - 1) / 15.0, 14),
+            round(1.10 - 0.20 * (index - 1) / 15.0, 14),
+        )
+        for index in range(1, 17)
+    }
+
+    actual_pairs = []
+    for index, path in enumerate(TS0163_NORMAL_DIP20_OUTER_SWEEP_CASES, start=1):
+        config = load_case_config(path)
+        outer_index = (index - 1) % 8
+        if index <= 8:
+            deviation = 0.20 - 0.0125 * outer_index
+            expected_loading = 1.0 - deviation
+            expected_leading = 1.0 + deviation
+        else:
+            deviation = 0.1125 + 0.0125 * outer_index
+            expected_loading = 1.0 + deviation
+            expected_leading = 1.0 - deviation
+
+        payload = asdict(config)
+        chamfer_length = payload["moving"].pop("leading_chamfer_along_fault")
+        chamfer_depth = payload["moving"].pop("leading_chamfer_perpendicular")
+        loading_fraction = payload["loading"].pop(
+            "normal_displacement_loading_fraction"
+        )
+        leading_fraction = payload["loading"].pop(
+            "normal_displacement_leading_fraction"
+        )
+        shear_ramp_time = payload["loading"].pop("shear_ramp_time")
+        stop_max_y = payload["loading"].pop("stop_max_y")
+        payload["name"] = "normalized"
+        pair = (round(loading_fraction, 14), round(leading_fraction, 14))
+        actual_pairs.append(pair)
+
+        assert payload == normalized_baseline
+        assert chamfer_length == pytest.approx(0.0)
+        assert chamfer_depth == pytest.approx(0.0)
+        assert loading_fraction == pytest.approx(expected_loading)
+        assert leading_fraction == pytest.approx(expected_leading)
+        assert 0.5 * (loading_fraction + leading_fraction) == pytest.approx(1.0)
+        assert min(abs(loading_fraction - 1.0), abs(leading_fraction - 1.0)) > 0.10
+        assert pair not in completed_pairs
+        assert shear_ramp_time == pytest.approx(0.075)
+        assert stop_max_y == pytest.approx(499.0)
+        assert config.name == (
+            f"pmma-rsf-{223 + index:04d}-normal-dip20-outer-{index:02d}of16"
+        )
+        estimate = estimate_case_size(config)
+        assert estimate["active_fault_length_mm"] == pytest.approx(500.0)
+        assert (
+            estimate["estimated_uncompressed_tb"]
+            * config.output.estimated_compression_ratio
+            < config.output.maximum_dump_tb
+        )
+
+    assert len(actual_pairs) == len(set(actual_pairs)) == 16
+    assert actual_pairs[0] == pytest.approx((0.80, 1.20))
+    assert actual_pairs[7] == pytest.approx((0.8875, 1.1125))
+    assert actual_pairs[8] == pytest.approx((1.1125, 0.8875))
+    assert actual_pairs[-1] == pytest.approx((1.20, 0.80))
 
 
 def test_normal_dip_profile_is_linear_on_the_normal_loading_face():

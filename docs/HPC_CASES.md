@@ -218,3 +218,12 @@ the normal-load gradient from a change in mean compression. Material, RSF,
 normal-loading time history, shear target, numerics, and output sampling are
 otherwise inherited from TS0163. The complete unchamfered fault is monitored
 through y=499 mm.
+
+TS0224 through TS0239 extend the same experiment to normal-displacement dips
+between 10% and 20% without repeating any TS0208--TS0223 endpoint pair. The
+first eight cases move from 80% at the loading end and 120% at the leading edge
+toward 88.75% and 111.25%. The second eight use the opposite orientation, from
+111.25% and 88.75% through 120% and 80%. Endpoint deviations change in 1.25%
+increments, and every case preserves a 100% mean normal displacement. Geometry
+remains unchamfered, the half-cosine shear ramp remains 75 ms, and all material,
+RSF, time-step, output, and rupture-coverage settings remain those of TS0163.
