@@ -165,6 +165,34 @@ def main() -> int:
             missing_only=args.missing_only,
         )
     )
+    normal_stress_stem = "normal_phase_end_normal_stress_profiles"
+    normal_stress_paths = [
+        plot_dir / f"{normal_stress_stem}.pdf",
+        stats_dir / f"{normal_stress_stem}.csv",
+        stats_dir / f"{normal_stress_stem}.json",
+    ]
+    tasks.append(
+        run_subprocess_task(
+            "normal_phase_end_normal_stress_profiles",
+            [
+                sys.executable,
+                str(SRC_DIR / "plot_normal_phase_end_normal_stress_profiles.py"),
+                "--input",
+                str(input_path),
+                "--output",
+                str(normal_stress_paths[0]),
+                "--stats-dir",
+                str(stats_dir),
+                "--distance-from-fault",
+                "5.0",
+                "--dpi",
+                str(args.dpi),
+            ],
+            expected_outputs=normal_stress_paths,
+            cwd=REPO_ROOT,
+            missing_only=args.missing_only,
+        )
+    )
     suite_command = [
         sys.executable,
         str(SRC_DIR / "run_velocity_weakening_analysis_suite.py"),
@@ -218,6 +246,11 @@ def main() -> int:
             "plot": str(dense_paths[0]),
             "csv": str(dense_paths[1]),
             "json": str(dense_paths[2]),
+        },
+        "normal_phase_end_normal_stress_profiles": {
+            "plot": str(normal_stress_paths[0]),
+            "csv": str(normal_stress_paths[1]),
+            "json": str(normal_stress_paths[2]),
         },
         "analysis_suite": str(suite_summary_path),
         "analysis_suite_status": suite_summary.get("status", "unavailable"),
