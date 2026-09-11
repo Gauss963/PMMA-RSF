@@ -29,6 +29,13 @@ Cargo.lock
 # Local macOS metadata
 .DS_Store
 
+# LaTeX build artefacts
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.synctex.gz
+
 # Local simulation outputs
 data/
 Plot/
