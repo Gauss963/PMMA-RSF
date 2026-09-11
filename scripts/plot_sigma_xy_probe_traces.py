@@ -27,6 +27,7 @@ from plot_near_fault_stress_fluctuation import (
     choose_probe_patches,
     configure_style,
     first_crossing_times,
+    piecewise_linear_window_mean,
     saved_time_ms,
 )
 
@@ -1355,10 +1356,6 @@ def plot_sigma_xy_probe_traces(
             (relative_time_ms >= residual_start_us * 1e-3)
             & (relative_time_ms <= residual_end_us * 1e-3)
         )
-        pre_tip_mask = (
-            (relative_time_ms >= -residual_end_us * 1e-3)
-            & (relative_time_ms <= -residual_start_us * 1e-3)
-        )
         pre_baseline_mask = (
             (relative_time_ms >= -pre_baseline_start_us * 1e-3)
             & (relative_time_ms <= -pre_baseline_end_us * 1e-3)
@@ -1367,30 +1364,22 @@ def plot_sigma_xy_probe_traces(
         pre_baseline_sample_count[station_index] = np.count_nonzero(
             pre_baseline_mask
         )
-        if residual_sample_count[station_index] < 2:
-            raise ValueError(
-                f"Residual window at y={stations[station_index]:g} mm "
-                "contains fewer than two saved frames."
-            )
-        if np.count_nonzero(pre_tip_mask) < 2:
-            raise ValueError(
-                f"Pre-tip comparison window at y={stations[station_index]:g} mm "
-                "contains fewer than two saved frames."
-            )
         if pre_baseline_sample_count[station_index] < 2:
             raise ValueError(
                 f"Pre-event baseline at y={stations[station_index]:g} mm "
                 "contains fewer than two saved frames."
             )
-        residual_stress[station_index] = np.mean(
-            traction_positive_stress[residual_mask, station_index, :],
-            axis=0,
-            dtype=np.float64,
+        residual_stress[station_index] = piecewise_linear_window_mean(
+            relative_time_ms,
+            traction_positive_stress[:, station_index, :],
+            residual_start_us * 1e-3,
+            residual_end_us * 1e-3,
         )
-        pre_tip_stress[station_index] = np.mean(
-            traction_positive_stress[pre_tip_mask, station_index, :],
-            axis=0,
-            dtype=np.float64,
+        pre_tip_stress[station_index] = piecewise_linear_window_mean(
+            relative_time_ms,
+            traction_positive_stress[:, station_index, :],
+            -residual_end_us * 1e-3,
+            -residual_start_us * 1e-3,
         )
         pre_baseline_stress[station_index] = np.mean(
             traction_positive_stress[pre_baseline_mask, station_index, :],
@@ -1572,6 +1561,7 @@ def plot_sigma_xy_probe_traces(
             pre_tip_stress - residual_stress
         ).tolist(),
         "residual_sample_count": residual_sample_count.astype(int).tolist(),
+        "residual_window_average_method": "piecewise-linear time integral",
         "pre_event_baseline_sample_count": (
             pre_baseline_sample_count.astype(int).tolist()
         ),

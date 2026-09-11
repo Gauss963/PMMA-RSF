@@ -85,7 +85,7 @@ export PIP_CACHE_DIR=/work/gauss112/.cache/pip-aarch64
 "$ENV_PYTHON" -m pip install --upgrade pip
 # JAX publishes CUDA 13 wheels for Linux aarch64 and recommends pip-provided
 # CUDA libraries so the environment stays independent of x86_64 modules.
-"$ENV_PYTHON" -m pip install --upgrade "jax[cuda13]"
+"$ENV_PYTHON" -m pip install --upgrade "jax[cuda13]==0.11.0"
 "$ENV_PYTHON" -m pip install --editable "${ROOT}[dev]"
 "$ENV_PYTHON" -m pip check
 

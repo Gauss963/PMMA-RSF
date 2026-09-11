@@ -56,6 +56,10 @@ if [[ -f "$RUN_DIR/status.json" ]]; then
       }
       RESUME_ARGS=(--resume)
       ;;
+    failed|running)
+      echo "$run_id has unsafe status '$run_status'; refusing automatic HDF5 resume." >&2
+      exit 1
+      ;;
     *)
       echo "$run_id has non-resumable status '$run_status'; refusing to overwrite it." >&2
       exit 1
@@ -68,7 +72,9 @@ export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONUNBUFFERED=1
 export JAX_ENABLE_X64=0
 export JAX_PLATFORMS=cuda
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.94
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.90
+# JAX CUDA graphs accumulated until they exhausted GB200 driver memory.
+export XLA_FLAGS=--xla_gpu_enable_command_buffer=
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-12}
 export OPENBLAS_NUM_THREADS=$OMP_NUM_THREADS
 export HDF5_USE_FILE_LOCKING=TRUE
@@ -82,17 +88,21 @@ echo "Host: $(hostname); CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-unset}"
 echo "Case: $CASE_FILE"
 echo "Runner time limit: $RUN_TIME_LIMIT_SECONDS seconds"
 
+if [[ -n "${SLURM_PROCID:-}" ]]; then
+  expected_index=$((SLURM_PROCID + 1))
+  if [[ "$SWEEP_INDEX" != "$expected_index" ]]; then
+    echo "Sweep index $SWEEP_INDEX does not match Slurm process $SLURM_PROCID." >&2
+    exit 1
+  fi
+fi
+
 "$PYTHON" - <<'PY'
 import jax
-from tatva.pmma.mpi import get_mpi_context
 
 devices = jax.devices()
-context = get_mpi_context()
-print(f"JAX devices={devices}; PMMA MPI size={context.size}")
+print(f"JAX devices={devices}; independent serial run")
 if len(devices) != 1 or devices[0].platform != "gpu":
     raise SystemExit(f"Expected exactly one GPU, found {devices}.")
-if context.size != 1:
-    raise SystemExit(f"Independent sweep task requires MPI size 1, found {context.size}.")
 PY
 
 gpu_id=${CUDA_VISIBLE_DEVICES%%,*}
@@ -165,4 +175,3 @@ run_status=$(
 )
 echo "$run_id finished this allocation with status: $run_status"
 echo "$run_id sweep task ended at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-

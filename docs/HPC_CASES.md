@@ -177,3 +177,63 @@ so rupture coverage is evaluated through y=479 mm. The RSF profile remains
 anchored to the original 500 mm coordinates; all surviving fault stations
 therefore retain exactly the TS0124 `f0`, `a`, `b`, and `D_c` values. Loading,
 time step, output rates, and the 1.40 TB dump budget remain unchanged.
+
+TS0144 through TS0159 form a controlled shear-loading-rate sweep based on
+TS0126. Geometry, the VN/VW/VS profile, normal loading, 2.45 mm target shear
+displacement, 75 ms shear window, 10 ns step, and rupture-stop rule are held
+fixed. The half-cosine peak-speed multiplier is linearly spaced from 1 to 3 in
+16 values, so the ramp duration is `0.075 / multiplier` seconds and ranges
+from 75 to 25 ms. Each case retains 1/16 of the TS0126 bulk and interface
+shear-frame targets, giving an estimated 0.0871 TB per run and 1.394 TB for
+the complete sweep. The committed cases are generated and verified by
+`scripts/generate_shear_rate_sweep_cases.py`; the GB200-r1 launcher assigns
+one independent case to each of 16 GPUs without MPI.
+
+TS0176 through TS0191 form a second controlled ramp-duration sweep based
+exactly on TS0163. Geometry, material, the TS0163 loading/middle/leading RSF
+profile, 2.45 mm target displacement, 75 ms shear phase, 10 ns time step,
+rupture-stop rule, and output sampling are unchanged. Only the half-cosine
+`shear_ramp_time` is linearly spaced from 25 to 75 ms in 16 values. Thus the
+available post-ramp hold decreases from 50 to 0 ms while total simulated shear
+time remains fixed. The GB200-r1 launcher runs 16 independent, non-MPI tasks,
+with exactly one GPU assigned to each case.
+
+TS0192 through TS0207 isolate the moving-block leading chamfer depth while
+retaining the complete TS0163 material, loading, RSF, numerics, and output
+configuration. The perpendicular depth is linearly spaced from 0 to 8 mm in
+16 values. Positive-depth cases keep the 20 mm along-fault chamfer length and
+the 479 mm rupture-coverage endpoint. TS0192 is the exact zero-depth control:
+both chamfer dimensions are zero, the full 500 mm fault is active, and its
+equivalent full-contact rupture endpoint is 499 mm. This avoids representing
+the no-chamfer control with an artificial nonzero depth.
+
+TS0208 through TS0223 isolate a linear normal-displacement dip on the original
+TS0163 loading face. All cases use the full rectangular moving block and a
+75 ms half-cosine shear-displacement ramp. At TS0208, the prescribed normal
+displacement increases linearly from 90% at the loading end (y=0) to 110% at
+the leading edge (y=500 mm). The two endpoint multipliers then interpolate in
+opposite directions until TS0223 reaches 110% at the loading end and 90% at
+the leading edge. Their mean remains exactly 100%, separating the effect of
+the normal-load gradient from a change in mean compression. Material, RSF,
+normal-loading time history, shear target, numerics, and output sampling are
+otherwise inherited from TS0163. The complete unchamfered fault is monitored
+through y=499 mm.
+
+TS0224 through TS0239 extend the same experiment to normal-displacement dips
+between 10% and 20% without repeating any TS0208--TS0223 endpoint pair. The
+first eight cases move from 80% at the loading end and 120% at the leading edge
+toward 88.75% and 111.25%. The second eight use the opposite orientation, from
+111.25% and 88.75% through 120% and 80%. Endpoint deviations change in 1.25%
+increments, and every case preserves a 100% mean normal displacement. Geometry
+remains unchamfered, the half-cosine shear ramp remains 75 ms, and all material,
+RSF, time-step, output, and rupture-coverage settings remain those of TS0163.
+
+TS0240 through TS0255 replace the normal-displacement boundary condition with
+a uniform normal traction on `moving-block-back`. The applied compressive
+stress increases from 17 to 32 MPa in exact 1 MPa increments. The 40 ms normal
+phase retains its 20 ms linear ramp, after which the target traction remains
+constant. Geometry is the same unchamfered rectangle used by the normal-dip
+sweeps, and the 75 ms half-cosine shear-displacement ramp, RSF profile, 10 ns
+step, output rates, and full-fault rupture criterion are unchanged. These cases
+explicitly set `normal_loading_mode = "stress"`; older TOMLs default to
+displacement control so their behavior is preserved.

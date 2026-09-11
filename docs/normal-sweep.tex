@@ -1,0 +1,190 @@
+% Record of the two normal-displacement dip sweeps, TS0208--TS0239.
+% Case TOMLs are the source of truth; run status was read on 11 September 2026.
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=1.55cm]{geometry}
+\usepackage{amsmath}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{pdflscape}
+\usepackage{siunitx}
+\usepackage[table]{xcolor}
+\usepackage[hidelinks]{hyperref}
+\usepackage{microtype}
+
+\sisetup{detect-all}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\newcommand{\run}[1]{\texttt{TS#1}}
+\newcommand{\file}[1]{\path{#1}}
+
+\title{PMMA Rate-and-State Normal-Displacement Dip Sweeps\\
+\large Configuration and execution record for TS0208--TS0239}
+\author{Internal simulation note}
+\date{11 September 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This note records the 32 normal-displacement dip cases \run{0208} through
+\run{0239}.  The prescribed displacement on the moving block's normal-loading
+face varies linearly along the fault while its endpoint mean remains equal to
+the calibrated uniform displacement.  The first 16 cases cover endpoint
+deviations from $-10\%$ to $+10\%$; the second 16 add both orientations between
+$10\%$ and $20\%$ without repeating a case.  All other geometry, material,
+rate-and-state friction, shear loading, time integration, and output settings
+are held fixed.  Of the 32 simulations, 29 completed and three stopped because
+of GPU out-of-memory errors.
+\end{abstract}
+
+\section{Definition of the sweep}
+
+Let $y=0$ be the loading end, $y=L=500\ \mathrm{mm}$ the leading end, and
+$u_0=0.6916209867\ \mathrm{mm}$ the uniform normal-displacement calibration for
+approximately $16\ \mathrm{MPa}$.  Each case prescribes
+\begin{equation}
+  u_n(y)=u_0\left[m_{\rm load}
+  +(m_{\rm lead}-m_{\rm load})\frac{y}{L}\right].
+  \label{eq:normal-dip}
+\end{equation}
+Every pair satisfies
+\begin{equation}
+  \frac{m_{\rm load}+m_{\rm lead}}{2}=1,
+\end{equation}
+so the line-average prescribed displacement is $u_0$.  The sweep therefore
+changes the normal-load gradient and its orientation without intentionally
+changing the mean compression.  This statement concerns the prescribed
+boundary displacement; elastic edge effects mean that the resulting fault
+normal stress need not be exactly linear or have an exactly uniform mean.
+
+The two deterministic generators are
+\begin{quote}\small
+\file{scripts/generate_ts0163_normal_dip_sweep_cases.py},\\
+\file{scripts/generate_ts0163_normal_dip20_outer_sweep_cases.py}.
+\end{quote}
+They use \file{cases/rsf_0163_leading_interp_04.toml} as the common source
+case and explicitly remove its leading-edge chamfer.
+
+\section{Parameters held fixed}
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \caption{Configuration shared by all 32 normal-dip cases.}
+  \label{tab:fixed}
+  \begin{tabular}{@{}L{5.0cm}L{5.3cm}L{4.0cm}@{}}
+    \toprule
+    Quantity & Value & Interpretation \\
+    \midrule
+    Moving block & $200\times500\ \mathrm{mm^2}$ & Full rectangle; no chamfer \\
+    Stationary block & $145\times550\ \mathrm{mm^2}$ & Plane-strain two-block geometry \\
+    Material & $E=7662\ \mathrm{MPa}$, $\nu=0.2$, $\rho=1.148\times10^{-9}\ \mathrm{tonne/mm^3}$ & PMMA model \\
+    Normal loading & Displacement control; $u_0=0.6916209867\ \mathrm{mm}$ & 40 ms phase, 20 ms linear ramp \\
+    Shear loading & $0\rightarrow2.45\ \mathrm{mm}$, half cosine & 75 ms phase and 75 ms ramp; no hold \\
+    Peak shear speed & $\pi(2.45)/(2\times0.075)=51.31\ \mathrm{mm/s}$ & Same loading rate in every case \\
+    Quasi-static shear fraction & 0 & Fully explicit shear loading \\
+    Element and mesh & Q4, $h=0.50\ \mathrm{mm}$ & Full rectangular contact \\
+    Time integration & $\Delta t=10\ \mathrm{ns}$, CFL $=0.35$, contact factor $=0.50$ & \texttt{float32}; batch size 65,536 \\
+    Rupture stop & Slip $\geq D_c$, $|V|\geq500\ \mathrm{mm/s}$, 100\% coverage & Active interval $y=0.5$--499 mm \\
+    RSF loading/middle & $a=0.005$, $b=0.0258194007$ & Identical VW law; no loading-end VN zone \\
+    RSF leading & $f_0=0.8$, $a=0.0067142857$, $b=0.005$ & 30 mm leading zone; $a-b>0$ \\
+    State distance & $D_c=3.7650493\times10^{-4}\ \mathrm{mm}$ & Shared by all three RSF zones \\
+    RSF transitions & Loading 50 mm; leading 100 mm & Half-cosine spatial interpolation \\
+    Output targets & Bulk: 2 normal + 5,200 shear; interface: 100 normal + 50,000 shear & LZF; 0.10 TB limit per case \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The loading face is locked in shear during the normal phase.  Tangential
+contact remains active, and no normal-relaxation or quasi-static damping stage
+is used.  Consequently, changes across the sweep can be attributed to the
+normal-displacement profile, subject to numerical failure or stochastic
+hardware effects.
+
+\section{Case matrix and execution status}
+
+Table~\ref{tab:cases} lists the exact endpoint multipliers.  ``Complete'' and
+``GPU OOM'' are taken from the F1 copies of each run's \file{status.json} on
+11 September 2026.  A GPU OOM is an execution failure, not a physical outcome
+of that parameter value.
+
+\begin{landscape}
+\footnotesize
+\renewcommand{\arraystretch}{0.94}
+\begin{longtable}{@{}C{1.5cm}C{1.4cm}C{1.8cm}C{1.8cm}C{2.1cm}L{6.5cm}@{}}
+  \caption{Normal-displacement dip sweep.  Multipliers act on
+  $u_0=0.6916209867\ \mathrm{mm}$.}
+  \label{tab:cases}\\
+  \toprule
+  Run & Case & $m_{\rm load}$ & $m_{\rm lead}$ & Endpoint dip & Status \\
+  \midrule
+  \endfirsthead
+  \toprule
+  Run & Case & $m_{\rm load}$ & $m_{\rm lead}$ & Endpoint dip & Status \\
+  \midrule
+  \endhead
+  \bottomrule
+  \endfoot
+  \run{0208} & 01/16 & 0.900000 & 1.100000 & $-10.000\%\rightarrow+10.000\%$ & Complete \\
+  \run{0209} & 02/16 & 0.913333 & 1.086667 & $-8.667\%\rightarrow+8.667\%$ & Complete \\
+  \run{0210} & 03/16 & 0.926667 & 1.073333 & $-7.333\%\rightarrow+7.333\%$ & Complete \\
+  \run{0211} & 04/16 & 0.940000 & 1.060000 & $-6.000\%\rightarrow+6.000\%$ & Complete \\
+  \run{0212} & 05/16 & 0.953333 & 1.046667 & $-4.667\%\rightarrow+4.667\%$ & Complete \\
+  \run{0213} & 06/16 & 0.966667 & 1.033333 & $-3.333\%\rightarrow+3.333\%$ & Complete \\
+  \run{0214} & 07/16 & 0.980000 & 1.020000 & $-2.000\%\rightarrow+2.000\%$ & Complete \\
+  \run{0215} & 08/16 & 0.993333 & 1.006667 & $-0.667\%\rightarrow+0.667\%$ & Complete \\
+  \run{0216} & 09/16 & 1.006667 & 0.993333 & $+0.667\%\rightarrow-0.667\%$ & Complete \\
+  \run{0217} & 10/16 & 1.020000 & 0.980000 & $+2.000\%\rightarrow-2.000\%$ & Complete \\
+  \run{0218} & 11/16 & 1.033333 & 0.966667 & $+3.333\%\rightarrow-3.333\%$ & Complete \\
+  \run{0219} & 12/16 & 1.046667 & 0.953333 & $+4.667\%\rightarrow-4.667\%$ & Complete \\
+  \run{0220} & 13/16 & 1.060000 & 0.940000 & $+6.000\%\rightarrow-6.000\%$ & Complete \\
+  \run{0221} & 14/16 & 1.073333 & 0.926667 & $+7.333\%\rightarrow-7.333\%$ & Complete \\
+  \run{0222} & 15/16 & 1.086667 & 0.913333 & $+8.667\%\rightarrow-8.667\%$ & Complete \\
+  \run{0223} & 16/16 & 1.100000 & 0.900000 & $+10.000\%\rightarrow-10.000\%$ & Complete \\
+  \midrule
+  \run{0224} & 01/16 & 0.800000 & 1.200000 & $-20.000\%\rightarrow+20.000\%$ & Complete \\
+  \run{0225} & 02/16 & 0.812500 & 1.187500 & $-18.750\%\rightarrow+18.750\%$ & Complete \\
+  \run{0226} & 03/16 & 0.825000 & 1.175000 & $-17.500\%\rightarrow+17.500\%$ & Complete \\
+  \run{0227} & 04/16 & 0.837500 & 1.162500 & $-16.250\%\rightarrow+16.250\%$ & Complete \\
+  \run{0228} & 05/16 & 0.850000 & 1.150000 & $-15.000\%\rightarrow+15.000\%$ & GPU OOM before the shear history completed \\
+  \run{0229} & 06/16 & 0.862500 & 1.137500 & $-13.750\%\rightarrow+13.750\%$ & GPU OOM before the shear history completed \\
+  \run{0230} & 07/16 & 0.875000 & 1.125000 & $-12.500\%\rightarrow+12.500\%$ & Complete \\
+  \run{0231} & 08/16 & 0.887500 & 1.112500 & $-11.250\%\rightarrow+11.250\%$ & Complete \\
+  \run{0232} & 09/16 & 1.112500 & 0.887500 & $+11.250\%\rightarrow-11.250\%$ & GPU OOM before the shear history completed \\
+  \run{0233} & 10/16 & 1.125000 & 0.875000 & $+12.500\%\rightarrow-12.500\%$ & Complete \\
+  \run{0234} & 11/16 & 1.137500 & 0.862500 & $+13.750\%\rightarrow-13.750\%$ & Complete \\
+  \run{0235} & 12/16 & 1.150000 & 0.850000 & $+15.000\%\rightarrow-15.000\%$ & Complete \\
+  \run{0236} & 13/16 & 1.162500 & 0.837500 & $+16.250\%\rightarrow-16.250\%$ & Complete \\
+  \run{0237} & 14/16 & 1.175000 & 0.825000 & $+17.500\%\rightarrow-17.500\%$ & Complete \\
+  \run{0238} & 15/16 & 1.187500 & 0.812500 & $+18.750\%\rightarrow-18.750\%$ & Complete \\
+  \run{0239} & 16/16 & 1.200000 & 0.800000 & $+20.000\%\rightarrow-20.000\%$ & Complete \\
+\end{longtable}
+\end{landscape}
+
+\section{Data and analysis products}
+
+Each run's standard static figures are stored in \file{runs/TSxxxx/Plot} and
+tabular analysis products in \file{runs/TSxxxx/stats}.  The normal-loading
+diagnostic added for this campaign is
+\begin{quote}\small
+\file{Plot/normal_phase_end_normal_stress_profiles.pdf},\\
+\file{stats/normal_phase_end_normal_stress_profiles.csv},\\
+\file{stats/normal_phase_end_normal_stress_profiles.json}.
+\end{quote}
+It samples compressive-positive $-\sigma_{xx}$ at the last normal-phase bulk
+frame, both in the first moving-block element layer adjacent to the loading
+boundary and 5 mm from the fault on the moving side.  For the $0.5\ \mathrm{mm}$
+mesh, the actual element-center coordinates are $x=0.25\ \mathrm{mm}$ and the
+average of $x=194.75$ and $195.25\ \mathrm{mm}$, respectively.  The three OOM
+runs retained their normal-phase frames, so this normal-loading diagnostic is
+valid even though their shear-dependent figures are incomplete.
+
+At the time of the status audit, the F1 checkout retained status and plot
+directories for all 32 cases, but the bulk HDF5 files for \run{0208}--\run{0223}
+were no longer present under their standard run paths.  Reconstructing any new
+bulk-field diagnostic for those 16 cases requires restoring their original
+\file{data/simulation.h5} files.
+
+\end{document}

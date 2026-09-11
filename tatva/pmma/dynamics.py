@@ -96,6 +96,8 @@ class RunConfig:
     moving_leading_chamfer_perpendicular: float = 0.0
     normal_loading_mode: str = "stress"
     normal_displacement_override: float | None = None
+    normal_displacement_loading_fraction: float = 1.0
+    normal_displacement_leading_fraction: float = 1.0
     shear_loading_mode: str = "stress"
     shear_loading_stiffness: float | None = None
     mu_k_override: float | None = None
@@ -1062,12 +1064,46 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
     total_dofs = dimension * (moving_n + stationary_n)
 
     fixed_dofs = make_dirichlet_dofs(stationary, moving_offset, dimension=dimension)
+    moving_normal_edge_nodes = moving.boundary_nodes["moving-block-back"]
     moving_normal_edge_dofs = make_global_dof_indices(
-        moving.boundary_nodes["moving-block-back"],
+        moving_normal_edge_nodes,
         0,
         0,
         dimension,
     ).astype(jnp.int32)
+    normal_displacement_loading_fraction = float(
+        config.normal_displacement_loading_fraction
+    )
+    normal_displacement_leading_fraction = float(
+        config.normal_displacement_leading_fraction
+    )
+    if any(
+        not math.isfinite(value) or value <= 0.0
+        for value in (
+            normal_displacement_loading_fraction,
+            normal_displacement_leading_fraction,
+        )
+    ):
+        raise ValueError(
+            "normal displacement loading/leading fractions must be finite and positive."
+        )
+    normal_displacement_coordinate = jnp.clip(
+        (
+            moving.mesh.coords[moving_normal_edge_nodes, 1]
+            - float(case.moving.origin[1])
+        )
+        / float(case.moving.dimensions[1]),
+        0.0,
+        1.0,
+    )
+    normal_displacement_profile = (
+        normal_displacement_loading_fraction
+        + (
+            normal_displacement_leading_fraction
+            - normal_displacement_loading_fraction
+        )
+        * normal_displacement_coordinate
+    ).astype(dtype)
     moving_shear_edge_dofs = make_global_dof_indices(
         moving.boundary_nodes["moving-block-right"],
         0,
@@ -1695,6 +1731,8 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         "friction": friction,
         "fixed_dofs": fixed_dofs,
         "moving_normal_edge_dofs": moving_normal_edge_dofs,
+        "moving_normal_edge_y": moving.mesh.coords[moving_normal_edge_nodes, 1],
+        "normal_displacement_profile": normal_displacement_profile,
         "moving_shear_edge_dofs": moving_shear_edge_dofs,
         "moving_shear_loading_dofs": moving_shear_loading_dofs,
         "shear_force_boundary": "moving-block-right",
@@ -1814,6 +1852,12 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         "normal_stress": float(normal_stress),
         "normal_displacement": float(normal_displacement),
         "normal_displacement_estimate": float(normal_displacement_estimate),
+        "normal_displacement_loading_fraction": (
+            normal_displacement_loading_fraction
+        ),
+        "normal_displacement_leading_fraction": (
+            normal_displacement_leading_fraction
+        ),
         "shear_displacement_k": float(shear_displacement_k),
         "shear_displacement_s": float(shear_displacement_s),
         "quasistatic_shear_fraction": quasistatic_shear_fraction,
@@ -1866,6 +1910,7 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
     stationary_material = model["stationary_material"]
     base_fixed_dofs = model["fixed_dofs"]
     moving_normal_edge_dofs = model["moving_normal_edge_dofs"]
+    normal_displacement_profile = model["normal_displacement_profile"]
     moving_shear_edge_dofs = model["moving_shear_edge_dofs"]
     moving_shear_loading_dofs = model["moving_shear_loading_dofs"]
     force_normal = model["force_normal"]
@@ -1954,6 +1999,11 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         moving_normal_edge_dofs
         if use_normal_displacement
         else jnp.zeros((0,), dtype=jnp.int32)
+    )
+    prescribed_normal_profile = (
+        normal_displacement_profile
+        if use_normal_displacement
+        else jnp.zeros((0,), dtype=dtype)
     )
     prescribed_shear_dofs = (
         moving_shear_loading_dofs
@@ -2187,11 +2237,8 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
     )
     initial_prescribed_velocity = jnp.concatenate(
         [
-            jnp.full(
-                prescribed_normal_dofs.shape,
-                model["normal_velocity_pressure"][0],
-                dtype=dtype,
-            ),
+            prescribed_normal_profile
+            * model["normal_velocity_pressure"][0],
             jnp.full(
                 prescribed_shear_dofs.shape,
                 model["shear_velocity_pressure"][0],
@@ -2253,11 +2300,7 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         )
         prescribed_values = jnp.concatenate(
             [
-                jnp.full(
-                    prescribed_normal_dofs.shape,
-                    loading[2],
-                    dtype=dtype,
-                ),
+                prescribed_normal_profile * loading[2],
                 jnp.full(
                     prescribed_shear_dofs.shape,
                     applied_shear_displacement,
@@ -2267,11 +2310,7 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         )
         prescribed_velocities = jnp.concatenate(
             [
-                jnp.full(
-                    prescribed_normal_dofs.shape,
-                    loading[3],
-                    dtype=dtype,
-                ),
+                prescribed_normal_profile * loading[3],
                 jnp.full(
                     prescribed_shear_dofs.shape,
                     applied_shear_velocity,
@@ -2506,6 +2545,12 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         "shear_displacement_boundary": model["shear_displacement_boundary"],
         "normal_displacement": model["normal_displacement"],
         "normal_displacement_estimate": model["normal_displacement_estimate"],
+        "normal_displacement_loading_fraction": model[
+            "normal_displacement_loading_fraction"
+        ],
+        "normal_displacement_leading_fraction": model[
+            "normal_displacement_leading_fraction"
+        ],
         "moving_leading_chamfer_along_fault": model[
             "moving_leading_chamfer_along_fault"
         ],
@@ -2658,6 +2703,7 @@ def run_simulation_dumped(
     stationary_material = model["stationary_material"]
     base_fixed_dofs = model["fixed_dofs"]
     moving_normal_edge_dofs = model["moving_normal_edge_dofs"]
+    normal_displacement_profile = model["normal_displacement_profile"]
     moving_shear_edge_dofs = model["moving_shear_edge_dofs"]
     moving_shear_loading_dofs = model["moving_shear_loading_dofs"]
     force_normal = model["force_normal"]
@@ -2747,6 +2793,11 @@ def run_simulation_dumped(
         moving_normal_edge_dofs
         if use_normal_displacement
         else jnp.zeros((0,), dtype=jnp.int32)
+    )
+    prescribed_normal_profile = (
+        normal_displacement_profile
+        if use_normal_displacement
+        else jnp.zeros((0,), dtype=dtype)
     )
     prescribed_shear_dofs = (
         moving_shear_loading_dofs
@@ -3118,11 +3169,8 @@ def run_simulation_dumped(
     )
     initial_prescribed_velocity = jnp.concatenate(
         [
-            jnp.full(
-                prescribed_normal_dofs.shape,
-                model["normal_velocity_pressure"][0],
-                dtype=dtype,
-            ),
+            prescribed_normal_profile
+            * model["normal_velocity_pressure"][0],
             jnp.full(
                 prescribed_shear_dofs.shape,
                 model["shear_velocity_pressure"][0],
@@ -3187,11 +3235,7 @@ def run_simulation_dumped(
         )
         prescribed_values = jnp.concatenate(
             [
-                jnp.full(
-                    prescribed_normal_dofs.shape,
-                    loading[2],
-                    dtype=dtype,
-                ),
+                prescribed_normal_profile * loading[2],
                 jnp.full(
                     prescribed_shear_dofs.shape,
                     applied_shear_displacement,
@@ -3201,11 +3245,7 @@ def run_simulation_dumped(
         )
         prescribed_velocities = jnp.concatenate(
             [
-                jnp.full(
-                    prescribed_normal_dofs.shape,
-                    loading[3],
-                    dtype=dtype,
-                ),
+                prescribed_normal_profile * loading[3],
                 jnp.full(
                     prescribed_shear_dofs.shape,
                     applied_shear_velocity,
@@ -3717,6 +3757,12 @@ def run_simulation_dumped(
         h5.attrs["normal_stress"] = model["normal_stress"]
         h5.attrs["normal_displacement"] = model["normal_displacement"]
         h5.attrs["normal_displacement_estimate"] = model["normal_displacement_estimate"]
+        h5.attrs["normal_displacement_loading_fraction"] = model[
+            "normal_displacement_loading_fraction"
+        ]
+        h5.attrs["normal_displacement_leading_fraction"] = model[
+            "normal_displacement_leading_fraction"
+        ]
         h5.attrs["shear_displacement_k"] = model["shear_displacement_k"]
         h5.attrs["shear_displacement_s"] = model["shear_displacement_s"]
         h5.attrs["quasistatic_shear_fraction"] = model[
@@ -3839,6 +3885,23 @@ def run_simulation_dumped(
             dtype="f4",
             compression=compression,
             chunks=(min(256, total_frames), len(history_columns)),
+        )
+        normal_loading = h5.create_group("normal_loading")
+        normal_loading.create_dataset(
+            "boundary_y",
+            data=np.asarray(model["moving_normal_edge_y"], dtype=np.float32),
+        )
+        normal_loading.create_dataset(
+            "displacement_fraction_profile",
+            data=np.asarray(model["normal_displacement_profile"], dtype=np.float32),
+        )
+        normal_loading.create_dataset(
+            "target_displacement_profile",
+            data=np.asarray(
+                model["normal_displacement"]
+                * model["normal_displacement_profile"],
+                dtype=np.float32,
+            ),
         )
         interface_plot_mask = np.isin(
             np.asarray(master_nodes), np.asarray(interface_plot_master_nodes)
@@ -4497,6 +4560,12 @@ def run_simulation_dumped(
         "shear_displacement_boundary": model["shear_displacement_boundary"],
         "normal_displacement": model["normal_displacement"],
         "normal_displacement_estimate": model["normal_displacement_estimate"],
+        "normal_displacement_loading_fraction": model[
+            "normal_displacement_loading_fraction"
+        ],
+        "normal_displacement_leading_fraction": model[
+            "normal_displacement_leading_fraction"
+        ],
         "moving_leading_chamfer_along_fault": model[
             "moving_leading_chamfer_along_fault"
         ],

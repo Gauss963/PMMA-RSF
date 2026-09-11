@@ -57,6 +57,34 @@ LOADING_SWEEP_CASES = [
     ROOT / "cases" / f"rsf_{run:04d}_loading_interp_{index:02d}.toml"
     for index, run in enumerate(range(128, 144), start=1)
 ]
+SHEAR_RATE_SWEEP_CASES = [
+    ROOT / "cases" / f"rsf_{run:04d}_shear_rate_{index:02d}.toml"
+    for index, run in enumerate(range(144, 160), start=1)
+]
+LEADING_EDGE_SWEEP_CASES = [
+    ROOT / "cases" / f"rsf_{run:04d}_leading_interp_{index:02d}.toml"
+    for index, run in enumerate(range(160, 176), start=1)
+]
+TS0163_RAMP_TIME_SWEEP_CASES = [
+    ROOT / "cases" / f"rsf_{run:04d}_ramp_time_{index:02d}.toml"
+    for index, run in enumerate(range(176, 192), start=1)
+]
+TS0163_CHAMFER_DEPTH_SWEEP_CASES = [
+    ROOT / "cases" / f"rsf_{run:04d}_chamfer_depth_{index:02d}.toml"
+    for index, run in enumerate(range(192, 208), start=1)
+]
+TS0163_NORMAL_DIP_SWEEP_CASES = [
+    ROOT / "cases" / f"rsf_{run:04d}_normal_dip_{index:02d}.toml"
+    for index, run in enumerate(range(208, 224), start=1)
+]
+TS0163_NORMAL_DIP20_OUTER_SWEEP_CASES = [
+    ROOT / "cases" / f"rsf_{run:04d}_normal_dip20_outer_{index:02d}.toml"
+    for index, run in enumerate(range(224, 240), start=1)
+]
+TS0163_NORMAL_STRESS_SWEEP_CASES = [
+    ROOT / "cases" / f"rsf_{run:04d}_normal_stress_{index:02d}.toml"
+    for index, run in enumerate(range(240, 256), start=1)
+]
 
 
 def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
@@ -146,6 +174,504 @@ def test_loading_end_sweep_interpolates_only_loading_ab_and_reduces_frames():
         assert config.name == (
             f"pmma-rsf-{127 + index:04d}-loading-ab-{index:02d}of16"
         )
+
+
+def test_shear_rate_sweep_changes_only_ramp_time_and_reduces_frames():
+    baseline = load_case_config(TS0126_CASE)
+    baseline_common = asdict(baseline)
+    for key in ("name", "output"):
+        baseline_common.pop(key)
+    baseline_common["loading"].pop("shear_ramp_time")
+
+    baseline_output = asdict(baseline.output)
+    for key in (
+        "bulk_shear_frames",
+        "interface_shear_frames",
+        "maximum_dump_tb",
+    ):
+        baseline_output.pop(key)
+
+    for index, path in enumerate(SHEAR_RATE_SWEEP_CASES, start=1):
+        config = load_case_config(path)
+        speed_factor = 1.0 + 2.0 * (index - 1) / 15.0
+
+        common = asdict(config)
+        for key in ("name", "output"):
+            common.pop(key)
+        ramp_time = common["loading"].pop("shear_ramp_time")
+        assert common == baseline_common
+        assert ramp_time == pytest.approx(0.075 / speed_factor)
+        assert config.loading.shear_phase_time == pytest.approx(0.075)
+        assert config.loading.shear_displacement_final == pytest.approx(2.45)
+
+        output = asdict(config.output)
+        assert output.pop("bulk_shear_frames") == 5200
+        assert output.pop("interface_shear_frames") == 50000
+        assert output.pop("maximum_dump_tb") == pytest.approx(0.10)
+        assert output == baseline_output
+        assert config.name == (
+            f"pmma-rsf-{143 + index:04d}-shear-rate-{index:02d}of16"
+        )
+
+
+def test_leading_edge_sweep_combines_ts0159_rate_with_ts0143_loading_end():
+    rate_reference = load_case_config(SHEAR_RATE_SWEEP_CASES[-1])
+    loading_reference = load_case_config(LOADING_SWEEP_CASES[-1])
+    baseline = asdict(rate_reference)
+    baseline["name"] = "normalized"
+    baseline["rsf"]["loading"] = asdict(loading_reference.rsf.loading)
+
+    for index, path in enumerate(LEADING_EDGE_SWEEP_CASES, start=1):
+        config = load_case_config(path)
+        if index <= 8:
+            fraction = (index - 1) / 7.0
+            expected_a = 0.008 + fraction * (0.005 - 0.008)
+            expected_b = 0.005
+        else:
+            fraction = (index - 8) / 8.0
+            expected_a = 0.005
+            expected_b = 0.005 + fraction * (0.025819400653936703 - 0.005)
+
+        payload = asdict(config)
+        leading = payload["rsf"]["leading"]
+        assert leading["direct_effect"] == pytest.approx(expected_a)
+        assert leading["state_effect"] == pytest.approx(expected_b)
+        payload["name"] = "normalized"
+        payload["rsf"]["leading"] = baseline["rsf"]["leading"]
+        assert payload == baseline
+        assert config.rsf.loading == loading_reference.rsf.loading
+        assert config.rsf.loading == config.rsf.middle
+        assert config.loading.shear_ramp_time == pytest.approx(0.025)
+        assert config.name == (
+            f"pmma-rsf-{159 + index:04d}-leading-ab-{index:02d}of16"
+        )
+
+    assert load_case_config(LEADING_EDGE_SWEEP_CASES[7]).rsf.leading.direct_effect == (
+        pytest.approx(0.005)
+    )
+    assert load_case_config(LEADING_EDGE_SWEEP_CASES[7]).rsf.leading.state_effect == (
+        pytest.approx(0.005)
+    )
+    final_config = load_case_config(LEADING_EDGE_SWEEP_CASES[-1])
+    assert final_config.rsf.leading.direct_effect == (
+        final_config.rsf.middle.direct_effect
+    )
+    assert final_config.rsf.leading.state_effect == (
+        final_config.rsf.middle.state_effect
+    )
+    assert final_config.rsf.leading.characteristic_slip == (
+        final_config.rsf.middle.characteristic_slip
+    )
+    assert final_config.rsf.leading.reference_friction == (
+        final_config.rsf.initial_friction
+    )
+
+
+def test_ts0163_ramp_time_sweep_changes_only_ramp_duration():
+    baseline = load_case_config(LEADING_EDGE_SWEEP_CASES[3])
+    normalized_baseline = asdict(baseline)
+    normalized_baseline["name"] = "normalized"
+    normalized_baseline["loading"].pop("shear_ramp_time")
+
+    for index, path in enumerate(TS0163_RAMP_TIME_SWEEP_CASES, start=1):
+        config = load_case_config(path)
+        expected_ramp = 0.025 + (index - 1) * (0.075 - 0.025) / 15.0
+        payload = asdict(config)
+        ramp_time = payload["loading"].pop("shear_ramp_time")
+        payload["name"] = "normalized"
+
+        assert payload == normalized_baseline
+        assert ramp_time == pytest.approx(expected_ramp)
+        assert ramp_time <= config.loading.shear_phase_time
+        assert config.loading.shear_phase_time == pytest.approx(0.075)
+        assert config.loading.shear_displacement_final == pytest.approx(2.45)
+        assert config.name == (
+            f"pmma-rsf-{175 + index:04d}-ramp-time-{index:02d}of16"
+        )
+
+
+def test_ts0163_chamfer_depth_sweep_changes_only_geometry_depth_and_endpoint():
+    baseline = load_case_config(LEADING_EDGE_SWEEP_CASES[3])
+    normalized_baseline = asdict(baseline)
+    normalized_baseline["name"] = "normalized"
+    normalized_baseline["moving"].pop("leading_chamfer_along_fault")
+    normalized_baseline["moving"].pop("leading_chamfer_perpendicular")
+    normalized_baseline["loading"].pop("stop_max_y")
+
+    for index, path in enumerate(TS0163_CHAMFER_DEPTH_SWEEP_CASES, start=1):
+        config = load_case_config(path)
+        expected_depth = 8.0 * (index - 1) / 15.0
+        payload = asdict(config)
+        chamfer_length = payload["moving"].pop("leading_chamfer_along_fault")
+        chamfer_depth = payload["moving"].pop("leading_chamfer_perpendicular")
+        stop_max_y = payload["loading"].pop("stop_max_y")
+        payload["name"] = "normalized"
+
+        assert payload == normalized_baseline
+        assert chamfer_depth == pytest.approx(expected_depth)
+        assert chamfer_length == pytest.approx(0.0 if index == 1 else 20.0)
+        assert stop_max_y == pytest.approx(499.0 if index == 1 else 479.0)
+        estimate = estimate_case_size(config)
+        assert estimate["active_fault_length_mm"] == pytest.approx(
+            500.0 if index == 1 else 480.0
+        )
+        assert (
+            estimate["estimated_uncompressed_tb"]
+            * config.output.estimated_compression_ratio
+            < config.output.maximum_dump_tb
+        )
+        assert config.name == (
+            f"pmma-rsf-{191 + index:04d}-chamfer-depth-{index:02d}of16"
+        )
+
+
+def test_ts0163_normal_dip_sweep_changes_only_requested_loading_and_geometry():
+    baseline = load_case_config(LEADING_EDGE_SWEEP_CASES[3])
+    normalized_baseline = asdict(baseline)
+    normalized_baseline["name"] = "normalized"
+    normalized_baseline["moving"].pop("leading_chamfer_along_fault")
+    normalized_baseline["moving"].pop("leading_chamfer_perpendicular")
+    normalized_baseline["loading"].pop("normal_displacement_loading_fraction")
+    normalized_baseline["loading"].pop("normal_displacement_leading_fraction")
+    normalized_baseline["loading"].pop("shear_ramp_time")
+    normalized_baseline["loading"].pop("stop_max_y")
+
+    for index, path in enumerate(TS0163_NORMAL_DIP_SWEEP_CASES, start=1):
+        config = load_case_config(path)
+        fraction = (index - 1) / 15.0
+        expected_loading = 0.90 + 0.20 * fraction
+        expected_leading = 1.10 - 0.20 * fraction
+        payload = asdict(config)
+        chamfer_length = payload["moving"].pop("leading_chamfer_along_fault")
+        chamfer_depth = payload["moving"].pop("leading_chamfer_perpendicular")
+        loading_fraction = payload["loading"].pop(
+            "normal_displacement_loading_fraction"
+        )
+        leading_fraction = payload["loading"].pop(
+            "normal_displacement_leading_fraction"
+        )
+        shear_ramp_time = payload["loading"].pop("shear_ramp_time")
+        stop_max_y = payload["loading"].pop("stop_max_y")
+        payload["name"] = "normalized"
+
+        assert payload == normalized_baseline
+        assert chamfer_length == pytest.approx(0.0)
+        assert chamfer_depth == pytest.approx(0.0)
+        assert loading_fraction == pytest.approx(expected_loading)
+        assert leading_fraction == pytest.approx(expected_leading)
+        assert 0.5 * (loading_fraction + leading_fraction) == pytest.approx(1.0)
+        assert shear_ramp_time == pytest.approx(0.075)
+        assert stop_max_y == pytest.approx(499.0)
+        assert config.name == f"pmma-rsf-{207 + index:04d}-normal-dip-{index:02d}of16"
+        run_config = make_run_config(config)
+        assert run_config.normal_displacement_loading_fraction == pytest.approx(
+            expected_loading
+        )
+        assert run_config.normal_displacement_leading_fraction == pytest.approx(
+            expected_leading
+        )
+        estimate = estimate_case_size(config)
+        assert estimate["active_fault_length_mm"] == pytest.approx(500.0)
+        assert (
+            estimate["estimated_uncompressed_tb"]
+            * config.output.estimated_compression_ratio
+            < config.output.maximum_dump_tb
+        )
+
+
+def test_ts0163_normal_dip20_outer_sweep_adds_only_new_outer_dips():
+    baseline = load_case_config(LEADING_EDGE_SWEEP_CASES[3])
+    normalized_baseline = asdict(baseline)
+    normalized_baseline["name"] = "normalized"
+    normalized_baseline["moving"].pop("leading_chamfer_along_fault")
+    normalized_baseline["moving"].pop("leading_chamfer_perpendicular")
+    normalized_baseline["loading"].pop("normal_displacement_loading_fraction")
+    normalized_baseline["loading"].pop("normal_displacement_leading_fraction")
+    normalized_baseline["loading"].pop("shear_ramp_time")
+    normalized_baseline["loading"].pop("stop_max_y")
+    completed_pairs = {
+        (
+            round(0.90 + 0.20 * (index - 1) / 15.0, 14),
+            round(1.10 - 0.20 * (index - 1) / 15.0, 14),
+        )
+        for index in range(1, 17)
+    }
+
+    actual_pairs = []
+    for index, path in enumerate(TS0163_NORMAL_DIP20_OUTER_SWEEP_CASES, start=1):
+        config = load_case_config(path)
+        outer_index = (index - 1) % 8
+        if index <= 8:
+            deviation = 0.20 - 0.0125 * outer_index
+            expected_loading = 1.0 - deviation
+            expected_leading = 1.0 + deviation
+        else:
+            deviation = 0.1125 + 0.0125 * outer_index
+            expected_loading = 1.0 + deviation
+            expected_leading = 1.0 - deviation
+
+        payload = asdict(config)
+        chamfer_length = payload["moving"].pop("leading_chamfer_along_fault")
+        chamfer_depth = payload["moving"].pop("leading_chamfer_perpendicular")
+        loading_fraction = payload["loading"].pop(
+            "normal_displacement_loading_fraction"
+        )
+        leading_fraction = payload["loading"].pop(
+            "normal_displacement_leading_fraction"
+        )
+        shear_ramp_time = payload["loading"].pop("shear_ramp_time")
+        stop_max_y = payload["loading"].pop("stop_max_y")
+        payload["name"] = "normalized"
+        pair = (round(loading_fraction, 14), round(leading_fraction, 14))
+        actual_pairs.append(pair)
+
+        assert payload == normalized_baseline
+        assert chamfer_length == pytest.approx(0.0)
+        assert chamfer_depth == pytest.approx(0.0)
+        assert loading_fraction == pytest.approx(expected_loading)
+        assert leading_fraction == pytest.approx(expected_leading)
+        assert 0.5 * (loading_fraction + leading_fraction) == pytest.approx(1.0)
+        assert min(abs(loading_fraction - 1.0), abs(leading_fraction - 1.0)) > 0.10
+        assert pair not in completed_pairs
+        assert shear_ramp_time == pytest.approx(0.075)
+        assert stop_max_y == pytest.approx(499.0)
+        assert config.name == (
+            f"pmma-rsf-{223 + index:04d}-normal-dip20-outer-{index:02d}of16"
+        )
+        estimate = estimate_case_size(config)
+        assert estimate["active_fault_length_mm"] == pytest.approx(500.0)
+        assert (
+            estimate["estimated_uncompressed_tb"]
+            * config.output.estimated_compression_ratio
+            < config.output.maximum_dump_tb
+        )
+
+    assert len(actual_pairs) == len(set(actual_pairs)) == 16
+    assert actual_pairs[0] == pytest.approx((0.80, 1.20))
+    assert actual_pairs[7] == pytest.approx((0.8875, 1.1125))
+    assert actual_pairs[8] == pytest.approx((1.1125, 0.8875))
+    assert actual_pairs[-1] == pytest.approx((1.20, 0.80))
+
+
+def test_ts0163_normal_stress_sweep_changes_only_control_mode_and_stress():
+    baseline = load_case_config(LEADING_EDGE_SWEEP_CASES[3])
+    normalized_baseline = asdict(baseline)
+    normalized_baseline["name"] = "normalized"
+    normalized_baseline["moving"].pop("leading_chamfer_along_fault")
+    normalized_baseline["moving"].pop("leading_chamfer_perpendicular")
+    normalized_baseline["loading"].pop("normal_loading_mode")
+    normalized_baseline["loading"].pop("normal_stress_reference")
+    normalized_baseline["loading"].pop("shear_ramp_time")
+    normalized_baseline["loading"].pop("stop_max_y")
+
+    for index, path in enumerate(TS0163_NORMAL_STRESS_SWEEP_CASES, start=1):
+        config = load_case_config(path)
+        payload = asdict(config)
+        chamfer_length = payload["moving"].pop("leading_chamfer_along_fault")
+        chamfer_depth = payload["moving"].pop("leading_chamfer_perpendicular")
+        normal_mode = payload["loading"].pop("normal_loading_mode")
+        normal_stress = payload["loading"].pop("normal_stress_reference")
+        shear_ramp_time = payload["loading"].pop("shear_ramp_time")
+        stop_max_y = payload["loading"].pop("stop_max_y")
+        payload["name"] = "normalized"
+
+        assert payload == normalized_baseline
+        assert chamfer_length == pytest.approx(0.0)
+        assert chamfer_depth == pytest.approx(0.0)
+        assert normal_mode == "stress"
+        assert normal_stress == pytest.approx(16.0 + index)
+        assert config.loading.normal_displacement_loading_fraction == pytest.approx(1.0)
+        assert config.loading.normal_displacement_leading_fraction == pytest.approx(1.0)
+        assert shear_ramp_time == pytest.approx(0.075)
+        assert stop_max_y == pytest.approx(499.0)
+        assert config.name == (
+            f"pmma-rsf-{239 + index:04d}-normal-stress-{index:02d}of16"
+        )
+        run_config = make_run_config(config)
+        assert run_config.normal_loading_mode == "stress"
+        assert run_config.normal_stress_override == pytest.approx(16.0 + index)
+        estimate = estimate_case_size(config)
+        assert estimate["active_fault_length_mm"] == pytest.approx(500.0)
+        assert (
+            estimate["estimated_uncompressed_tb"]
+            * config.output.estimated_compression_ratio
+            < config.output.maximum_dump_tb
+        )
+
+
+def test_normal_loading_mode_defaults_to_displacement_and_rejects_unknown(tmp_path):
+    baseline = load_case_config(LEADING_EDGE_SWEEP_CASES[3])
+    assert baseline.loading.normal_loading_mode == "displacement"
+    assert make_run_config(baseline).normal_loading_mode == "displacement"
+
+    source = LEADING_EDGE_SWEEP_CASES[3].read_text(encoding="utf-8")
+    source = source.replace(
+        "[loading]\n",
+        '[loading]\nnormal_loading_mode = "pressure-ish"\n',
+        1,
+    )
+    invalid = tmp_path / "invalid-normal-mode.toml"
+    invalid.write_text(source, encoding="utf-8")
+    with pytest.raises(ValueError, match="normal_loading_mode"):
+        load_case_config(invalid)
+
+
+def test_normal_stress_sweep_loads_only_the_moving_block_back_face():
+    from dataclasses import replace
+
+    config = load_case_config(TS0163_NORMAL_STRESS_SWEEP_CASES[0])
+    coarse = replace(
+        config,
+        numerics=replace(config.numerics, mesh_size=100.0, time_step=None),
+    )
+    model = build_case_model(make_case(coarse), make_run_config(coarse))
+    coords = np.asarray(model["moving"].mesh.coords, dtype=np.float64)
+    moving_force = np.asarray(model["force_normal"], dtype=np.float64).reshape(-1, 2)[
+        : coords.shape[0]
+    ]
+    loaded_nodes = np.flatnonzero(np.abs(moving_force[:, 0]) > 0.0)
+
+    assert model["normal_loading_mode"] == "stress"
+    assert model["normal_stress"] == pytest.approx(17.0)
+    assert loaded_nodes.size > 0
+    np.testing.assert_allclose(coords[loaded_nodes, 0], 0.0)
+    np.testing.assert_allclose(moving_force[:, 1], 0.0)
+    assert np.all(moving_force[loaded_nodes, 0] > 0.0)
+    assert moving_force[:, 0].sum() == pytest.approx(17.0 * 500.0)
+
+
+def test_normal_dip_profile_is_linear_on_the_normal_loading_face():
+    from dataclasses import replace
+
+    config = load_case_config(TS0163_NORMAL_DIP_SWEEP_CASES[0])
+    coarse = replace(
+        config,
+        numerics=replace(config.numerics, mesh_size=50.0, time_step=None),
+        loading=replace(
+            config.loading,
+            normal_phase_time=2.0e-5,
+            normal_ramp_time=1.0e-5,
+            shear_phase_time=2.0e-5,
+            shear_ramp_time=1.0e-5,
+            stop_on_rupture=False,
+        ),
+    )
+    model = build_case_model(make_case(coarse), make_run_config(coarse))
+    y = np.asarray(model["moving_normal_edge_y"], dtype=np.float64)
+    profile = np.asarray(model["normal_displacement_profile"], dtype=np.float64)
+    order = np.argsort(y)
+
+    np.testing.assert_allclose(
+        profile[order],
+        0.90 + 0.20 * y[order] / 500.0,
+        rtol=2.0e-7,
+        atol=1.0e-7,
+    )
+    assert y[order][0] == pytest.approx(0.0)
+    assert y[order][-1] == pytest.approx(500.0)
+    assert profile[order][0] == pytest.approx(0.90)
+    assert profile[order][-1] == pytest.approx(1.10)
+
+
+def test_normal_dip_is_applied_to_dumped_loading_face_displacement(tmp_path):
+    from dataclasses import replace
+
+    config = load_case_config(TS0163_NORMAL_DIP_SWEEP_CASES[0])
+    config = replace(
+        config,
+        numerics=replace(config.numerics, mesh_size=100.0, cfl=0.2, time_step=None),
+        loading=replace(
+            config.loading,
+            normal_phase_time=2.0e-5,
+            normal_ramp_time=1.0e-5,
+            shear_phase_time=2.0e-5,
+            shear_ramp_time=1.0e-5,
+            normal_displacement=1.0e-3,
+            shear_displacement_final=1.0e-3,
+            stop_on_rupture=False,
+        ),
+    )
+    output = tmp_path / "normal-dip.h5"
+
+    result = run_simulation_dumped(
+        make_case(config),
+        make_run_config(config),
+        output,
+        frames_per_phase=2,
+        shear_frames_per_phase=2,
+        interface_frames_per_phase=2,
+        shear_interface_frames_per_phase=2,
+        include_initial_frame=False,
+        store_bulk_strain=False,
+        store_bulk_velocity=False,
+    )
+
+    with h5py.File(output, "r") as h5:
+        y = np.asarray(h5["normal_loading/boundary_y"], dtype=np.float64)
+        profile = np.asarray(
+            h5["normal_loading/displacement_fraction_profile"], dtype=np.float64
+        )
+        target = np.asarray(
+            h5["normal_loading/target_displacement_profile"], dtype=np.float64
+        )
+        moving_coords = np.asarray(h5["moving/coords"], dtype=np.float64)
+        moving_displacement = np.asarray(
+            h5["moving/displacement"][-1], dtype=np.float64
+        )
+        loading_nodes = np.flatnonzero(np.isclose(moving_coords[:, 0], 0.0))
+        order = np.argsort(moving_coords[loading_nodes, 1])
+
+        np.testing.assert_allclose(target, 1.0e-3 * profile, rtol=1.0e-6)
+        np.testing.assert_allclose(
+            moving_displacement[loading_nodes[order], 0],
+            target[np.argsort(y)],
+            rtol=1.0e-6,
+            atol=1.0e-9,
+        )
+        assert h5.attrs["normal_displacement_loading_fraction"] == pytest.approx(0.90)
+        assert h5.attrs["normal_displacement_leading_fraction"] == pytest.approx(1.10)
+    assert result["summary"]["normal_displacement_loading_fraction"] == pytest.approx(
+        0.90
+    )
+    assert result["summary"]["normal_displacement_leading_fraction"] == pytest.approx(
+        1.10
+    )
+
+
+def test_normal_dip_profile_preserves_stress_controlled_normal_loading(tmp_path):
+    from dataclasses import replace
+
+    config = load_case_config(TS0163_NORMAL_DIP_SWEEP_CASES[0])
+    config = replace(
+        config,
+        numerics=replace(config.numerics, mesh_size=100.0, cfl=0.2, time_step=None),
+        loading=replace(
+            config.loading,
+            normal_phase_time=2.0e-5,
+            normal_ramp_time=1.0e-5,
+            shear_phase_time=2.0e-5,
+            shear_ramp_time=1.0e-5,
+            shear_displacement_final=1.0e-3,
+            stop_on_rupture=False,
+        ),
+    )
+    run_config = replace(make_run_config(config), normal_loading_mode="stress")
+
+    result = run_simulation_dumped(
+        make_case(config),
+        run_config,
+        tmp_path / "normal-stress.h5",
+        frames_per_phase=2,
+        shear_frames_per_phase=2,
+        interface_frames_per_phase=2,
+        shear_interface_frames_per_phase=2,
+        include_initial_frame=False,
+        store_bulk_strain=False,
+        store_bulk_velocity=False,
+    )
+
+    assert result["summary"]["normal_loading_mode"] == "stress"
+    assert result["summary"]["saved_frames"] == 4
 
 
 def test_storage_preflight_uses_uncompressed_remaining_size_and_reserve(
@@ -1124,8 +1650,10 @@ def test_regularized_dump_resumes_checkpoint_without_changing_solution(tmp_path)
     )
 
     assert not checkpoint.exists()
+    # Resuming creates a new float32 GPU compilation boundary. Different GPU
+    # architectures may therefore change the final reduction by a few ULPs.
     np.testing.assert_allclose(
-        resumed["history"], reference["history"], rtol=5.0e-6, atol=1.0e-6
+        resumed["history"], reference["history"], rtol=1.0e-5, atol=1.0e-6
     )
     assert resumed["summary"]["saved_frames"] == 5
 

@@ -14,7 +14,14 @@ def test_non_gb200_slurm_scripts_leave_memory_allocation_to_scheduler():
     explicit_memory_scripts = {
         "PMMA-GB200-SETUP.slurm",
         "PMMA-RSF-GB200.slurm",
+        "PMMA-RSF-GB200-R1-LEADING-EDGE-SWEEP.slurm",
+        "PMMA-RSF-GB200-R1-CHAMFER-DEPTH-SWEEP.slurm",
+        "PMMA-RSF-GB200-R1-NORMAL-DIP20-OUTER-SWEEP.slurm",
+        "PMMA-RSF-GB200-R1-NORMAL-DIP-SWEEP.slurm",
+        "PMMA-RSF-GB200-R1-NORMAL-STRESS-SWEEP.slurm",
+        "PMMA-RSF-GB200-R1-RAMP-TIME-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-SWEEP.slurm",
+        "PMMA-RSF-GB200-R1-SHEAR-RATE-SWEEP.slurm",
         # Zinfandel needs an explicit shared-node allocation for the MPI run.
         "PMMA-RSF-ZINFANDEL-CPU.slurm",
     }
@@ -39,7 +46,7 @@ def test_gb200_setup_builds_an_isolated_arm_environment():
     assert '"$system_python" -m venv "$ENV_PREFIX"' in content
     assert "Miniforge3-Linux-aarch64.sh" in content
     assert '"$(uname -m)" == "aarch64"' in content
-    assert '"jax[cuda13]"' in content
+    assert '"jax[cuda13]==0.11.0"' in content
     assert "tests/test_friction.py tests/test_pmma_cases.py" in content
     assert "estimated_uncompressed_bytes" in content
     assert 'AUTO_SUBMIT_PRODUCTION:-0' in content
@@ -77,14 +84,268 @@ def test_gb200_r1_sweep_uses_sixteen_independent_gpu_steps():
     assert "#SBATCH --gres=gpu:4" in content
     assert "#SBATCH --mem=800G" in content
     assert "#SBATCH --time=16:00:00" in content
+    assert "#SBATCH --signal=USR1@1800" in content
+    assert "--mpi=none" in content
     assert "--gpus-per-task=1" in content
-    assert "srun --exclusive --exact" in content
-    assert "for index in $(seq 1 16)" in content
-    assert "RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-55800}" in content
-    assert "estimated_total + 50_000_000_000" in content
+    assert "srun --exact --mpi=none --kill-on-bad-exit=0 --wait=0" in content
+    assert "--ntasks=16 --ntasks-per-node=4" in content
+    assert "SWEEP_INDEX=$((SLURM_PROCID + 1))" in content
+    assert "RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-54000}" in content
+    assert "estimated_remaining + 20_000_000_000" in content
+    assert "MIN_FREE_BYTES=${MIN_FREE_BYTES:-10000000000}" in content
 
     assert "run_number=$((127 + SWEEP_INDEX))" in rank_runner
     assert 'RUN_DIR="$ROOT/runs/$run_id"' in rank_runner
-    assert "context.size != 1" in rank_runner
+    assert "SLURM_PROCID + 1" in rank_runner
+    assert "tatva.pmma.mpi" not in rank_runner
+    assert "mpi4py" not in rank_runner
+    assert "XLA_PYTHON_CLIENT_MEM_FRACTION=0.90" in rank_runner
+    assert "XLA_FLAGS=--xla_gpu_enable_command_buffer=" in rank_runner
+    assert "refusing automatic HDF5 resume" in rank_runner
     assert "Free space $free_bytes is below" in rank_runner
     assert "RESUME_ARGS=(--resume)" in rank_runner
+
+
+def test_cpu_analysis_sweep_processes_every_run_without_animation():
+    content = (ROOT / "slurm/PMMA-ANALYSIS-SWEEP-CPU.slurm").read_text(
+        encoding="utf-8"
+    )
+
+    assert "#SBATCH --partition=hm112" in content
+    assert "#SBATCH --cpus-per-task=32" in content
+    assert "#SBATCH --array" not in content
+    assert "ROOT=/work1/gauss112/tatva" in content
+    assert "RUN_FIRST=${RUN_FIRST:-128}" in content
+    assert "RUN_LAST=${RUN_LAST:-143}" in content
+    assert "WORKERS=${WORKERS:-4}" in content
+    assert 'run_id=$(printf "TS%04d" "$run_number")' in content
+    assert "worker \"$worker_index\" &" in content
+    assert "postprocess_velocity_weakening_run.py" in content
+    assert '--input "$input"' in content
+    assert "--dpi 260" in content
+    assert "--missing-only" in content
+    assert "render_stress_frames.py" not in content
+    assert "make_stress_animation.py" not in content
+    assert "stress_triptych_frames" not in content
+
+
+def test_single_run_cpu_analysis_uses_current_f1_checkout_without_animation():
+    content = (ROOT / "slurm/PMMA-ANALYSIS-CPU.slurm").read_text(
+        encoding="utf-8"
+    )
+
+    assert "#SBATCH --partition=hm112" in content
+    assert "#SBATCH --cpus-per-task=8" in content
+    assert "ROOT=/work1/gauss112/tatva" in content
+    assert "postprocess_velocity_weakening_run.py" in content
+    assert "--missing-only" in content
+    assert "render_stress_frames.py" not in content
+    assert "make_stress_animation.py" not in content
+
+
+def test_gb200_shear_rate_sweep_uses_independent_single_gpu_tasks():
+    content = (
+        ROOT / "slurm/PMMA-RSF-GB200-R1-SHEAR-RATE-SWEEP.slurm"
+    ).read_text(encoding="utf-8")
+    rank_runner = (
+        ROOT / "scripts/run_gb200_shear_rate_sweep_rank.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "#SBATCH --partition=gb200-r1" in content
+    assert "#SBATCH --nodes=4" in content
+    assert "#SBATCH --ntasks=16" in content
+    assert "#SBATCH --ntasks-per-node=4" in content
+    assert "#SBATCH --gres=gpu:4" in content
+    assert "#SBATCH --time=16:00:00" in content
+    assert "--mpi=none" in content
+    assert "--gpus-per-task=1" in content
+    assert "generate_shear_rate_sweep_cases.py --check" in content
+    assert "range(144, 160)" in content
+    assert "0.075 / expected_factor" in content
+
+    assert "run_number=$((143 + SWEEP_INDEX))" in rank_runner
+    assert 'RUN_DIR="$ROOT/runs/$run_id"' in rank_runner
+    assert "tatva.pmma.mpi" not in rank_runner
+    assert "mpi4py" not in rank_runner
+    assert "XLA_PYTHON_CLIENT_MEM_FRACTION=0.90" in rank_runner
+    assert "XLA_FLAGS=--xla_gpu_enable_command_buffer=" in rank_runner
+    assert "refusing automatic HDF5 resume" in rank_runner
+
+
+def test_gb200_leading_edge_sweep_uses_independent_single_gpu_tasks():
+    content = (
+        ROOT / "slurm/PMMA-RSF-GB200-R1-LEADING-EDGE-SWEEP.slurm"
+    ).read_text(encoding="utf-8")
+    rank_runner = (
+        ROOT / "scripts/run_gb200_leading_edge_sweep_rank.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "#SBATCH --partition=gb200-r1" in content
+    assert "#SBATCH --nodes=4" in content
+    assert "#SBATCH --ntasks=16" in content
+    assert "#SBATCH --ntasks-per-node=4" in content
+    assert "#SBATCH --gres=gpu:4" in content
+    assert "#SBATCH --time=16:00:00" in content
+    assert "--mpi=none" in content
+    assert "--gpus-per-task=1" in content
+    assert "generate_leading_edge_sweep_cases.py --check" in content
+    assert "range(160, 176)" in content
+    assert "config.rsf.loading != config.rsf.middle" in content
+    assert "config.loading.shear_ramp_time - 0.025" in content
+
+    assert "run_number=$((159 + SWEEP_INDEX))" in rank_runner
+    assert 'RUN_DIR="$ROOT/runs/$run_id"' in rank_runner
+    assert "tatva.pmma.mpi" not in rank_runner
+    assert "mpi4py" not in rank_runner
+    assert "XLA_PYTHON_CLIENT_MEM_FRACTION=0.90" in rank_runner
+    assert "XLA_FLAGS=--xla_gpu_enable_command_buffer=" in rank_runner
+    assert "refusing automatic HDF5 resume" in rank_runner
+
+
+def test_gb200_ts0163_ramp_time_sweep_uses_independent_single_gpu_tasks():
+    content = (
+        ROOT / "slurm/PMMA-RSF-GB200-R1-RAMP-TIME-SWEEP.slurm"
+    ).read_text(encoding="utf-8")
+    rank_runner = (
+        ROOT / "scripts/run_gb200_ts0163_ramp_time_sweep_rank.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "#SBATCH --partition=gb200-r1" in content
+    assert "#SBATCH --nodes=4" in content
+    assert "#SBATCH --ntasks=16" in content
+    assert "#SBATCH --ntasks-per-node=4" in content
+    assert "#SBATCH --gres=gpu:4" in content
+    assert "#SBATCH --time=16:00:00" in content
+    assert "--mpi=none" in content
+    assert "--gpus-per-task=1" in content
+    assert "generate_ts0163_ramp_time_sweep_cases.py --check" in content
+    assert "range(176, 192)" in content
+    assert "expected_ramp = ramp_time(index)" in content
+
+    assert "run_number=$((175 + SWEEP_INDEX))" in rank_runner
+    assert 'RUN_DIR="$ROOT/runs/$run_id"' in rank_runner
+    assert "tatva.pmma.mpi" not in rank_runner
+    assert "mpi4py" not in rank_runner
+    assert "XLA_PYTHON_CLIENT_MEM_FRACTION=0.90" in rank_runner
+    assert "XLA_FLAGS=--xla_gpu_enable_command_buffer=" in rank_runner
+    assert "refusing automatic HDF5 resume" in rank_runner
+
+
+def test_gb200_ts0163_chamfer_depth_sweep_uses_single_gpu_tasks():
+    content = (
+        ROOT / "slurm/PMMA-RSF-GB200-R1-CHAMFER-DEPTH-SWEEP.slurm"
+    ).read_text(encoding="utf-8")
+    rank_runner = (
+        ROOT / "scripts/run_gb200_ts0163_chamfer_depth_sweep_rank.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "#SBATCH --partition=gb200-r1" in content
+    assert "#SBATCH --nodes=4" in content
+    assert "#SBATCH --ntasks=16" in content
+    assert "#SBATCH --ntasks-per-node=4" in content
+    assert "#SBATCH --gres=gpu:4" in content
+    assert "#SBATCH --time=16:00:00" in content
+    assert "--mpi=none" in content
+    assert "--gpus-per-task=1" in content
+    assert "generate_ts0163_chamfer_depth_sweep_cases.py --check" in content
+    assert "range(192, 208)" in content
+    assert "expected_length, expected_depth, expected_stop" in content
+
+    assert "run_number=$((191 + SWEEP_INDEX))" in rank_runner
+    assert 'RUN_DIR="$ROOT/runs/$run_id"' in rank_runner
+    assert "tatva.pmma.mpi" not in rank_runner
+    assert "mpi4py" not in rank_runner
+    assert "XLA_PYTHON_CLIENT_MEM_FRACTION=0.90" in rank_runner
+    assert "XLA_FLAGS=--xla_gpu_enable_command_buffer=" in rank_runner
+    assert "refusing automatic HDF5 resume" in rank_runner
+
+
+def test_gb200_ts0163_normal_dip_sweep_uses_single_gpu_tasks():
+    content = (
+        ROOT / "slurm/PMMA-RSF-GB200-R1-NORMAL-DIP-SWEEP.slurm"
+    ).read_text(encoding="utf-8")
+    rank_runner = (
+        ROOT / "scripts/run_gb200_ts0163_normal_dip_sweep_rank.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "#SBATCH --partition=gb200-r1" in content
+    assert "#SBATCH --nodes=4" in content
+    assert "#SBATCH --ntasks=16" in content
+    assert "#SBATCH --ntasks-per-node=4" in content
+    assert "#SBATCH --gres=gpu:4" in content
+    assert "#SBATCH --time=16:00:00" in content
+    assert "--mpi=none" in content
+    assert "--gpus-per-task=1" in content
+    assert "generate_ts0163_normal_dip_sweep_cases.py --check" in content
+    assert "range(208, 224)" in content
+    assert "expected_loading, expected_leading" in content
+    assert "config.loading.shear_ramp_time - 0.075" in content
+
+    assert "run_number=$((207 + SWEEP_INDEX))" in rank_runner
+    assert 'RUN_DIR="$ROOT/runs/$run_id"' in rank_runner
+    assert "tatva.pmma.mpi" not in rank_runner
+    assert "mpi4py" not in rank_runner
+    assert "XLA_PYTHON_CLIENT_MEM_FRACTION=0.90" in rank_runner
+    assert "XLA_FLAGS=--xla_gpu_enable_command_buffer=" in rank_runner
+    assert "refusing automatic HDF5 resume" in rank_runner
+
+
+def test_gb200_ts0163_normal_dip20_outer_sweep_uses_single_gpu_tasks():
+    content = (
+        ROOT / "slurm/PMMA-RSF-GB200-R1-NORMAL-DIP20-OUTER-SWEEP.slurm"
+    ).read_text(encoding="utf-8")
+    rank_runner = (
+        ROOT / "scripts/run_gb200_ts0163_normal_dip20_outer_sweep_rank.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "#SBATCH --partition=gb200-r1" in content
+    assert "#SBATCH --nodes=4" in content
+    assert "#SBATCH --ntasks=16" in content
+    assert "#SBATCH --ntasks-per-node=4" in content
+    assert "#SBATCH --gres=gpu:4" in content
+    assert "#SBATCH --time=16:00:00" in content
+    assert "--mpi=none" in content
+    assert "--gpus-per-task=1" in content
+    assert "generate_ts0163_normal_dip20_outer_sweep_cases.py --check" in content
+    assert "range(224, 240)" in content
+    assert "duplicates the completed 10% sweep" in content
+    assert "config.loading.shear_ramp_time - 0.075" in content
+
+    assert "run_number=$((223 + SWEEP_INDEX))" in rank_runner
+    assert 'RUN_DIR="$ROOT/runs/$run_id"' in rank_runner
+    assert "tatva.pmma.mpi" not in rank_runner
+    assert "mpi4py" not in rank_runner
+    assert "XLA_PYTHON_CLIENT_MEM_FRACTION=0.90" in rank_runner
+    assert "XLA_FLAGS=--xla_gpu_enable_command_buffer=" in rank_runner
+    assert "refusing automatic HDF5 resume" in rank_runner
+
+
+def test_gb200_ts0163_normal_stress_sweep_uses_single_gpu_tasks():
+    content = (
+        ROOT / "slurm/PMMA-RSF-GB200-R1-NORMAL-STRESS-SWEEP.slurm"
+    ).read_text(encoding="utf-8")
+    rank_runner = (
+        ROOT / "scripts/run_gb200_ts0163_normal_stress_sweep_rank.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "#SBATCH --partition=gb200-r1" in content
+    assert "#SBATCH --nodes=4" in content
+    assert "#SBATCH --ntasks=16" in content
+    assert "#SBATCH --ntasks-per-node=4" in content
+    assert "#SBATCH --gres=gpu:4" in content
+    assert "#SBATCH --time=16:00:00" in content
+    assert "--mpi=none" in content
+    assert "--gpus-per-task=1" in content
+    assert "generate_ts0163_normal_stress_sweep_cases.py --check" in content
+    assert "range(240, 256)" in content
+    assert 'normal_loading_mode != "stress"' in content
+    assert "make_run_config(config).normal_loading_mode" in content
+    assert "config.loading.shear_ramp_time - 0.075" in content
+
+    assert "run_number=$((239 + SWEEP_INDEX))" in rank_runner
+    assert 'RUN_DIR="$ROOT/runs/$run_id"' in rank_runner
+    assert "tatva.pmma.mpi" not in rank_runner
+    assert "mpi4py" not in rank_runner
+    assert "XLA_PYTHON_CLIENT_MEM_FRACTION=0.90" in rank_runner
+    assert "XLA_FLAGS=--xla_gpu_enable_command_buffer=" in rank_runner
+    assert "refusing automatic HDF5 resume" in rank_runner
