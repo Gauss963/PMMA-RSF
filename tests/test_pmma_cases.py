@@ -40,8 +40,10 @@ CORRECTED_HYBRID_CASE = (
 EXPLICIT_Q4_CASE = (
     ROOT / "cases/rsf_0116_q4_explicit_10h.toml"
 )
+# The case Lc_estimate.RSF_ZONES currently tracks; rsf_0121 doubled the
+# leading-zone velocity strengthening, so rsf_0117 no longer matches there.
 COHESIVE_CALIBRATED_CASE = (
-    ROOT / "cases/rsf_0117_q4_explicit_10h.toml"
+    ROOT / "cases/rsf_0121_q4_slow_strong_vs_12h.toml"
 )
 TS0118_CASE = ROOT / "cases/rsf_0118_q4_explicit_10h.toml"
 TS0119_CASE = ROOT / "cases/rsf_0119_q4_explicit_10h.toml"
