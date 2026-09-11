@@ -128,7 +128,7 @@ def make_run_config(config: PMMACaseConfig) -> RunConfig:
         tangential_penalty=numerics.tangential_penalty,
         contact_safety_factor=numerics.contact_safety_factor,
         time_step_override=numerics.time_step,
-        normal_loading_mode="displacement",
+        normal_loading_mode=loading.normal_loading_mode,
         normal_displacement_override=loading.normal_displacement,
         normal_displacement_loading_fraction=(
             loading.normal_displacement_loading_fraction

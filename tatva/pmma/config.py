@@ -26,6 +26,7 @@ class MaterialConfig:
 
 @dataclass(frozen=True)
 class LoadingConfig:
+    normal_loading_mode: str
     normal_stress_reference: float
     normal_displacement: float
     normal_displacement_loading_fraction: float
@@ -201,6 +202,9 @@ def load_case_config(path: str | Path) -> PMMACaseConfig:
             poisson_ratio=float(material["poisson_ratio"]),
         ),
         loading=LoadingConfig(
+            normal_loading_mode=str(
+                loading.get("normal_loading_mode", "displacement")
+            ).strip().lower(),
             normal_stress_reference=float(loading["normal_stress_reference"]),
             normal_displacement=float(loading["normal_displacement"]),
             normal_displacement_loading_fraction=float(
@@ -399,6 +403,15 @@ def _validate(config: PMMACaseConfig) -> None:
         raise ValueError("shear_ramp_time cannot exceed shear_phase_time.")
     if config.loading.normal_ramp_time > config.loading.normal_phase_time:
         raise ValueError("normal_ramp_time cannot exceed normal_phase_time.")
+    if config.loading.normal_loading_mode not in {"displacement", "stress"}:
+        raise ValueError(
+            "loading.normal_loading_mode must be 'displacement' or 'stress'."
+        )
+    if (
+        not math.isfinite(config.loading.normal_stress_reference)
+        or config.loading.normal_stress_reference <= 0.0
+    ):
+        raise ValueError("loading.normal_stress_reference must be finite and positive.")
     normal_displacement_fractions = (
         config.loading.normal_displacement_loading_fraction,
         config.loading.normal_displacement_leading_fraction,

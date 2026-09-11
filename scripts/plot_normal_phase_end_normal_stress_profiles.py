@@ -114,6 +114,9 @@ def plot_normal_phase_end_normal_stress_profiles(
             h5["moving/stress"][frame_index, :, 0, 0], dtype=np.float64
         )
         reference_stress = float(h5.attrs.get("normal_stress", np.nan))
+        normal_loading_mode = str(
+            h5.attrs.get("normal_loading_mode", "displacement")
+        )
         loading_fraction = float(
             h5.attrs.get("normal_displacement_loading_fraction", 1.0)
         )
@@ -187,11 +190,15 @@ def plot_normal_phase_end_normal_stress_profiles(
     axes[0].set_ylabel(r"Compressive normal stress, $-\sigma_{xx}$ [MPa]")
     if np.isfinite(reference_stress):
         axes[1].legend(loc="best")
+    if normal_loading_mode == "stress":
+        loading_description = f"uniform stress control at {reference_stress:g} MPa"
+    else:
+        loading_description = (
+            f"displacement multipliers {loading_fraction:.3f} to "
+            f"{leading_fraction:.3f}"
+        )
     fig.suptitle(
-        (
-            f"End of normal loading, $t={time_ms:.3f}$ ms; "
-            f"displacement multipliers {loading_fraction:.3f} to {leading_fraction:.3f}"
-        ),
+        f"End of normal loading, $t={time_ms:.3f}$ ms; {loading_description}",
         fontsize=9.0,
     )
     fig.savefig(paths["pdf"], dpi=dpi)
@@ -214,6 +221,7 @@ def plot_normal_phase_end_normal_stress_profiles(
         "time_ms": time_ms,
         "stress_component": "-sigma_xx",
         "stress_sign_convention": "positive_in_compression",
+        "normal_loading_mode": normal_loading_mode,
         "normal_displacement_loading_fraction": loading_fraction,
         "normal_displacement_leading_fraction": leading_fraction,
         "fault_x_mm": fault_x,

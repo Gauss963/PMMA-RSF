@@ -68,6 +68,7 @@ def test_plot_uses_last_normal_frame_and_writes_stats(tmp_path):
     with h5py.File(input_path, "w") as h5:
         h5.attrs["dt"] = 1.0e-3
         h5.attrs["normal_stress"] = 16.0
+        h5.attrs["normal_loading_mode"] = "displacement"
         h5.attrs["normal_displacement_loading_fraction"] = 0.8
         h5.attrs["normal_displacement_leading_fraction"] = 1.2
         h5.create_dataset("phase_id", data=np.asarray([1, 1, 2]))
@@ -91,6 +92,7 @@ def test_plot_uses_last_normal_frame_and_writes_stats(tmp_path):
     assert result["frame_index"] == 1
     assert result["time_ms"] == pytest.approx(2.0)
     assert result["stress_component"] == "-sigma_xx"
+    assert result["normal_loading_mode"] == "displacement"
     assert result["loading_boundary_element_center_x_mm"] == pytest.approx([0.25])
     assert result["near_fault_element_center_x_mm"] == pytest.approx([0.75, 1.25])
 

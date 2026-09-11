@@ -227,3 +227,13 @@ toward 88.75% and 111.25%. The second eight use the opposite orientation, from
 increments, and every case preserves a 100% mean normal displacement. Geometry
 remains unchamfered, the half-cosine shear ramp remains 75 ms, and all material,
 RSF, time-step, output, and rupture-coverage settings remain those of TS0163.
+
+TS0240 through TS0255 replace the normal-displacement boundary condition with
+a uniform normal traction on `moving-block-back`. The applied compressive
+stress increases from 17 to 32 MPa in exact 1 MPa increments. The 40 ms normal
+phase retains its 20 ms linear ramp, after which the target traction remains
+constant. Geometry is the same unchamfered rectangle used by the normal-dip
+sweeps, and the 75 ms half-cosine shear-displacement ramp, RSF profile, 10 ns
+step, output rates, and full-fault rupture criterion are unchanged. These cases
+explicitly set `normal_loading_mode = "stress"`; older TOMLs default to
+displacement control so their behavior is preserved.

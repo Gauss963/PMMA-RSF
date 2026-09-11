@@ -18,6 +18,7 @@ def test_non_gb200_slurm_scripts_leave_memory_allocation_to_scheduler():
         "PMMA-RSF-GB200-R1-CHAMFER-DEPTH-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-NORMAL-DIP20-OUTER-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-NORMAL-DIP-SWEEP.slurm",
+        "PMMA-RSF-GB200-R1-NORMAL-STRESS-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-RAMP-TIME-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-SHEAR-RATE-SWEEP.slurm",
@@ -309,6 +310,37 @@ def test_gb200_ts0163_normal_dip20_outer_sweep_uses_single_gpu_tasks():
     assert "config.loading.shear_ramp_time - 0.075" in content
 
     assert "run_number=$((223 + SWEEP_INDEX))" in rank_runner
+    assert 'RUN_DIR="$ROOT/runs/$run_id"' in rank_runner
+    assert "tatva.pmma.mpi" not in rank_runner
+    assert "mpi4py" not in rank_runner
+    assert "XLA_PYTHON_CLIENT_MEM_FRACTION=0.90" in rank_runner
+    assert "XLA_FLAGS=--xla_gpu_enable_command_buffer=" in rank_runner
+    assert "refusing automatic HDF5 resume" in rank_runner
+
+
+def test_gb200_ts0163_normal_stress_sweep_uses_single_gpu_tasks():
+    content = (
+        ROOT / "slurm/PMMA-RSF-GB200-R1-NORMAL-STRESS-SWEEP.slurm"
+    ).read_text(encoding="utf-8")
+    rank_runner = (
+        ROOT / "scripts/run_gb200_ts0163_normal_stress_sweep_rank.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "#SBATCH --partition=gb200-r1" in content
+    assert "#SBATCH --nodes=4" in content
+    assert "#SBATCH --ntasks=16" in content
+    assert "#SBATCH --ntasks-per-node=4" in content
+    assert "#SBATCH --gres=gpu:4" in content
+    assert "#SBATCH --time=16:00:00" in content
+    assert "--mpi=none" in content
+    assert "--gpus-per-task=1" in content
+    assert "generate_ts0163_normal_stress_sweep_cases.py --check" in content
+    assert "range(240, 256)" in content
+    assert 'normal_loading_mode != "stress"' in content
+    assert "make_run_config(config).normal_loading_mode" in content
+    assert "config.loading.shear_ramp_time - 0.075" in content
+
+    assert "run_number=$((239 + SWEEP_INDEX))" in rank_runner
     assert 'RUN_DIR="$ROOT/runs/$run_id"' in rank_runner
     assert "tatva.pmma.mpi" not in rank_runner
     assert "mpi4py" not in rank_runner

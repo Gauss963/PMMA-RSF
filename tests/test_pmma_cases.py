@@ -81,6 +81,10 @@ TS0163_NORMAL_DIP20_OUTER_SWEEP_CASES = [
     ROOT / "cases" / f"rsf_{run:04d}_normal_dip20_outer_{index:02d}.toml"
     for index, run in enumerate(range(224, 240), start=1)
 ]
+TS0163_NORMAL_STRESS_SWEEP_CASES = [
+    ROOT / "cases" / f"rsf_{run:04d}_normal_stress_{index:02d}.toml"
+    for index, run in enumerate(range(240, 256), start=1)
+]
 
 
 def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
@@ -447,6 +451,93 @@ def test_ts0163_normal_dip20_outer_sweep_adds_only_new_outer_dips():
     assert actual_pairs[7] == pytest.approx((0.8875, 1.1125))
     assert actual_pairs[8] == pytest.approx((1.1125, 0.8875))
     assert actual_pairs[-1] == pytest.approx((1.20, 0.80))
+
+
+def test_ts0163_normal_stress_sweep_changes_only_control_mode_and_stress():
+    baseline = load_case_config(LEADING_EDGE_SWEEP_CASES[3])
+    normalized_baseline = asdict(baseline)
+    normalized_baseline["name"] = "normalized"
+    normalized_baseline["moving"].pop("leading_chamfer_along_fault")
+    normalized_baseline["moving"].pop("leading_chamfer_perpendicular")
+    normalized_baseline["loading"].pop("normal_loading_mode")
+    normalized_baseline["loading"].pop("normal_stress_reference")
+    normalized_baseline["loading"].pop("shear_ramp_time")
+    normalized_baseline["loading"].pop("stop_max_y")
+
+    for index, path in enumerate(TS0163_NORMAL_STRESS_SWEEP_CASES, start=1):
+        config = load_case_config(path)
+        payload = asdict(config)
+        chamfer_length = payload["moving"].pop("leading_chamfer_along_fault")
+        chamfer_depth = payload["moving"].pop("leading_chamfer_perpendicular")
+        normal_mode = payload["loading"].pop("normal_loading_mode")
+        normal_stress = payload["loading"].pop("normal_stress_reference")
+        shear_ramp_time = payload["loading"].pop("shear_ramp_time")
+        stop_max_y = payload["loading"].pop("stop_max_y")
+        payload["name"] = "normalized"
+
+        assert payload == normalized_baseline
+        assert chamfer_length == pytest.approx(0.0)
+        assert chamfer_depth == pytest.approx(0.0)
+        assert normal_mode == "stress"
+        assert normal_stress == pytest.approx(16.0 + index)
+        assert config.loading.normal_displacement_loading_fraction == pytest.approx(1.0)
+        assert config.loading.normal_displacement_leading_fraction == pytest.approx(1.0)
+        assert shear_ramp_time == pytest.approx(0.075)
+        assert stop_max_y == pytest.approx(499.0)
+        assert config.name == (
+            f"pmma-rsf-{239 + index:04d}-normal-stress-{index:02d}of16"
+        )
+        run_config = make_run_config(config)
+        assert run_config.normal_loading_mode == "stress"
+        assert run_config.normal_stress_override == pytest.approx(16.0 + index)
+        estimate = estimate_case_size(config)
+        assert estimate["active_fault_length_mm"] == pytest.approx(500.0)
+        assert (
+            estimate["estimated_uncompressed_tb"]
+            * config.output.estimated_compression_ratio
+            < config.output.maximum_dump_tb
+        )
+
+
+def test_normal_loading_mode_defaults_to_displacement_and_rejects_unknown(tmp_path):
+    baseline = load_case_config(LEADING_EDGE_SWEEP_CASES[3])
+    assert baseline.loading.normal_loading_mode == "displacement"
+    assert make_run_config(baseline).normal_loading_mode == "displacement"
+
+    source = LEADING_EDGE_SWEEP_CASES[3].read_text(encoding="utf-8")
+    source = source.replace(
+        "[loading]\n",
+        '[loading]\nnormal_loading_mode = "pressure-ish"\n',
+        1,
+    )
+    invalid = tmp_path / "invalid-normal-mode.toml"
+    invalid.write_text(source, encoding="utf-8")
+    with pytest.raises(ValueError, match="normal_loading_mode"):
+        load_case_config(invalid)
+
+
+def test_normal_stress_sweep_loads_only_the_moving_block_back_face():
+    from dataclasses import replace
+
+    config = load_case_config(TS0163_NORMAL_STRESS_SWEEP_CASES[0])
+    coarse = replace(
+        config,
+        numerics=replace(config.numerics, mesh_size=100.0, time_step=None),
+    )
+    model = build_case_model(make_case(coarse), make_run_config(coarse))
+    coords = np.asarray(model["moving"].mesh.coords, dtype=np.float64)
+    moving_force = np.asarray(model["force_normal"], dtype=np.float64).reshape(-1, 2)[
+        : coords.shape[0]
+    ]
+    loaded_nodes = np.flatnonzero(np.abs(moving_force[:, 0]) > 0.0)
+
+    assert model["normal_loading_mode"] == "stress"
+    assert model["normal_stress"] == pytest.approx(17.0)
+    assert loaded_nodes.size > 0
+    np.testing.assert_allclose(coords[loaded_nodes, 0], 0.0)
+    np.testing.assert_allclose(moving_force[:, 1], 0.0)
+    assert np.all(moving_force[loaded_nodes, 0] > 0.0)
+    assert moving_force[:, 0].sum() == pytest.approx(17.0 * 500.0)
 
 
 def test_normal_dip_profile_is_linear_on_the_normal_loading_face():
