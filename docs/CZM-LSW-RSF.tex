@@ -170,4 +170,158 @@ cells across the process zone, against a usual floor of five. $L_b$ is the
 quasi-static width and contracts as the rupture accelerates, so that margin
 should not be spent.
 
+\newpage
+\section*{Why the two characteristic slips differ by an order of magnitude}
+
+Table~\ref{tab:czm-lsw-rsf} carries two slips that share a fracture energy yet
+differ by a factor of $21$: $D_c = \SI{7.94e-3}{\milli\meter}$ for linear slip
+weakening and $D_c^{\mathrm{RSF}} = \SI{3.77e-4}{\milli\meter}$ for rate and
+state. They are not two estimates of one quantity. They measure different
+things.
+
+\paragraph{What each slip means.}
+In linear slip weakening, $D_c$ is the slip at which weakening \emph{ends}: the
+strength falls linearly from $\tau_p$ to $\tau_r$ and is then flat, so the whole
+breakdown work $\Gamma = \tfrac12\Delta\tau D_c$ is spent by the time the fault
+has slipped $D_c$. In rate and state, the slip written $D_c^{\mathrm{RSF}}$ (the
+$L$ of Dieterich and Ruina) is the distance over which the state variable
+$\theta$ is renewed. Under the ageing law $\dot\theta = 1 - V\theta/L$, a step
+in slip rate leaves $\theta$ relaxing as $\exp(-\delta/L)$; $L$ is the
+$e$-folding slip of the contact population, on the order of an asperity
+diameter. It marks where weakening \emph{begins} to be felt, not where it is
+complete, because the friction depends on $\theta$ only through a logarithm.
+
+\paragraph{Where the factor comes from.}
+Start every point at the steady state of the initial rate $V_1$, so
+$\theta_0 = L/V_1$, and step the rate to $V_2$. With $W = \theta_0 V_2/L = V_2/V_1$
+the strength excess above the new steady value is
+%
+\begin{equation}
+  \tau(\delta) - \tau_{\mathrm{ss}}
+    = \sigma_n\, b \ln\!\bigl[1 + (W-1)\,e^{-\delta/L}\bigr],
+  \label{eq:excess}
+\end{equation}
+%
+which starts at $\sigma_n b\ln W$ and decays only logarithmically. Its integral
+over slip is the breakdown work,
+%
+\begin{equation}
+  \Gamma = \sigma_n\, b\, L\, K(W),
+  \qquad
+  K(W) = -\mathrm{Li}_2\bigl(-(W-1)\bigr)
+       \simeq \tfrac12 \ln^{2} W + \tfrac{\pi^{2}}{6},
+  \label{eq:gamma-rsf}
+\end{equation}
+%
+and $K = 142.95$ at the ratio $W = 2\times10^{7}$ the cases use. If the same
+curve is read as slip weakening with the same peak-to-residual drop
+$\Delta\tau_{\mathrm{RSF}} = \sigma_n b \ln W$, the equivalent LSW slip is
+$D_c^{\mathrm{eq}} = 2\Gamma/\Delta\tau_{\mathrm{RSF}}$, so
+%
+\begin{equation}
+  \frac{D_c^{\mathrm{eq}}}{L}
+    = \frac{2K(W)}{\ln W}
+    \simeq \ln W + \frac{\pi^{2}}{3\ln W}
+    = 17.0 .
+  \label{eq:ratio}
+\end{equation}
+%
+The factor is set by the logarithm of the velocity jump alone. It is the
+$D_0^{\mathrm{eq}}/L \sim 15$ that Cocco and Bizzarri obtained numerically for
+crustal parameters; the residual difference is their slightly smaller $\ln W$
+and their reading of $D_c^{\mathrm{eq}}$ off a computed traction curve rather
+than from the energy.
+
+The table's ratio of $21.1$ carries one more factor. It compares the
+rate-and-state $L$ against the LSW $D_c$ inverted from the cohesive-zone
+$\Delta\tau = (\mu_s - \mu_k)\sigma_n = \SI{5.60}{\mega\pascal}$, whereas the
+rate-and-state curve overshoots through the direct effect to a peak
+$\mu = \mu_s + a\ln W = 0.884$ and drops
+$\Delta\tau_{\mathrm{RSF}} = \SI{6.94}{\mega\pascal}$. Hence
+$21.1 = 17.0 \times 6.94/5.60$. Both numbers are correct; they answer different
+questions.
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \caption{Fraction of the rate-and-state breakdown work spent within a given
+  multiple of $L$, from Eq.~\eqref{eq:excess} at $W = 2\times10^{7}$. Only a
+  ninth of $\Gamma$ is dissipated over the first $L$; the linear-slip-weakening
+  picture, in which all of it is spent by $D_c$, corresponds to the whole tail.}
+  \label{tab:gamma-partition}
+  \begin{tabular}{@{}r r@{}}
+    \toprule
+    Slip & Share of $\Gamma$ \\
+    \midrule
+    $1\,L$    & \SI{11.4}{\percent} \\
+    $2\,L$    & \SI{22.1}{\percent} \\
+    $5\,L$    & \SI{50.1}{\percent} \\
+    $10\,L$   & \SI{82.6}{\percent} \\
+    $11.8\,L$ & \SI{90.0}{\percent} \\
+    $17\,L$   & \SI{99.5}{\percent} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Consequence for the model.}
+The slip that governs the mesh and the nucleation size is $L$, not
+$D_c^{\mathrm{eq}}$: $L_b$ and $h^{*}$ in Table~\ref{tab:czm-lsw-rsf} are built
+on $L$, in line with the finding of Cocco and Bizzarri that the nucleation patch
+scales with $L$. Matching $\Gamma$ to the cohesive zone therefore forces
+$L$ to be small, and that in turn is what sets the \SI{0.5}{\milli\meter} cell
+size. The literature on crustal faults reaches the same conclusion from the
+other side: the $D_c$ recovered from dynamic or kinematic models is an outcome
+of the rupture and of the modelling assumptions, not a constitutive constant,
+and its apparent scaling with final slip can be an artefact of poorly
+constrained kinematic parameters.
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \caption{What the rate-and-state versus slip-weakening literature establishes
+  about the two characteristic slips.}
+  \label{tab:dc-literature}
+  \setlength{\tabcolsep}{4pt}
+  \begin{tabular}{@{}L{3.2cm} L{8.9cm} L{4.9cm}@{}}
+    \toprule
+    Reference & Finding & DOI \\
+    \midrule
+    Cocco \& Bizzarri (2002), \emph{GRL} 29(11), 1516
+      & A rate-and-state fault produces an effective slip-weakening traction
+        curve whose equivalent distance $D_0^{\mathrm{eq}}$ differs from the
+        state-evolution slip $L$, with $D_0^{\mathrm{eq}}/L \sim 15$. The
+        nucleation patch scales with $L$, not with $D_0^{\mathrm{eq}}$.
+      & \doi{10.1029/2001GL013999} \\
+    \addlinespace
+    Bizzarri \& Cocco (2003), \emph{JGR} 108(B8), 2373
+      & 2-D in-plane spontaneous ruptures under rate and state: the equivalent
+        slip-weakening distance is a function of $L$ \emph{and} of the initial
+        mechanical state, so it is an outcome of the rupture rather than a
+        material constant.
+      & \doi{10.1029/2002JB002198} \\
+    \addlinespace
+    Tinti et al.\ (2004), \emph{GRL} 31, L02611
+      & Estimates of $D_c$ from the traction evolution of 2-D in-plane cracks
+        under slip-weakening and rate-and-state laws are compared; the recovered
+        $D_c$ depends on the constitutive law and on how the breakdown is read
+        off the curve.
+      & \doi{10.1029/2003GL018811} \\
+    \addlinespace
+    Tinti et al.\ (2009), \emph{GJI} 177, 1205
+      & $D_c$ inferred from kinematic slip-velocity functions is highly
+        sensitive to the assumed rise time and acceleration duration; imposing
+        wrong but constant values manufactures an apparent $D_c$--final-slip
+        correlation absent from the target models.
+      & \doi{10.1111/j.1365-246X.2009.04143.x} \\
+    \addlinespace
+    Cocco, Tinti, Marone \& Piatanesi (2009), \emph{Int.\ Geophys.} 94, 163
+      & Review of the scaling of $D_c$ with final slip and of the physical
+        processes (thermal pressurisation, flash heating, gouge production)
+        that make the breakdown distance scale dependent rather than a fixed
+        fault property.
+      & \doi{10.1016/S0074-6142(08)00007-7} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
 \end{document}
