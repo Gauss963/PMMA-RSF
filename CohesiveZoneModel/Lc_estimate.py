@@ -176,7 +176,7 @@ def rsf_slip_for_fracture_energy(state_effect, fracture_energy=G):
 RSF_ZONES = {
     "loading": {"a": 0.004, "b": 0.004},
     "middle": {"a": 0.005, "b": rsf_state_effect(0.005)},
-    "leading": {"a": 0.008, "b": 0.005},
+    "leading": {"a": 0.010, "b": 0.004},
 }
 
 # One D_c is shared by every zone, matched on `middle` so that the zone the
