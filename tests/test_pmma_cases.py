@@ -85,6 +85,10 @@ TS0163_NORMAL_STRESS_SWEEP_CASES = [
     ROOT / "cases" / f"rsf_{run:04d}_normal_stress_{index:02d}.toml"
     for index, run in enumerate(range(240, 256), start=1)
 ]
+TS0240_LEADING_TRANSITION_SWEEP_CASES = [
+    ROOT / "cases" / f"rsf_{run:04d}_leading_transition_{index:02d}.toml"
+    for index, run in enumerate(range(256, 272), start=1)
+]
 
 
 def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
@@ -538,6 +542,52 @@ def test_normal_stress_sweep_loads_only_the_moving_block_back_face():
     np.testing.assert_allclose(moving_force[:, 1], 0.0)
     assert np.all(moving_force[loaded_nodes, 0] > 0.0)
     assert moving_force[:, 0].sum() == pytest.approx(17.0 * 500.0)
+
+
+def test_ts0240_leading_transition_sweep_uses_16_mpa_and_ends_in_a_step():
+    baseline = load_case_config(TS0163_NORMAL_STRESS_SWEEP_CASES[0])
+    normalized_baseline = asdict(baseline)
+    normalized_baseline["name"] = "normalized"
+    normalized_baseline["loading"].pop("normal_stress_reference")
+    normalized_baseline["rsf"].pop("leading_transition_length")
+
+    for index, path in enumerate(TS0240_LEADING_TRANSITION_SWEEP_CASES, start=1):
+        config = load_case_config(path)
+        expected_length = 100.0 * (1.0 - (index - 1) / 15.0)
+        payload = asdict(config)
+        normal_stress = payload["loading"].pop("normal_stress_reference")
+        transition = payload["rsf"].pop("leading_transition_length")
+        payload["name"] = "normalized"
+
+        assert payload == normalized_baseline
+        assert config.loading.normal_loading_mode == "stress"
+        assert normal_stress == pytest.approx(16.0)
+        assert transition == pytest.approx(expected_length)
+        assert config.name == (
+            f"pmma-rsf-{255 + index:04d}-leading-transition-{index:02d}of16"
+        )
+        estimate = estimate_case_size(config)
+        assert (
+            estimate["estimated_uncompressed_tb"]
+            * config.output.estimated_compression_ratio
+            < config.output.maximum_dump_tb
+        )
+
+    step_config = load_case_config(TS0240_LEADING_TRANSITION_SWEEP_CASES[-1])
+    y = np.arange(0.0, 500.5, 0.5)
+    profile = build_rate_state_profile(y, make_run_config(step_config).rsf_profile_spec)
+    below_step = int(np.flatnonzero(y == 469.5)[0])
+    at_step = int(np.flatnonzero(y == 470.0)[0])
+
+    assert step_config.rsf.leading_transition_length == pytest.approx(0.0)
+    assert profile["metadata"]["leading_transition_start"] == pytest.approx(470.0)
+    assert profile["metadata"]["leading_plateau_start"] == pytest.approx(470.0)
+    assert profile["direct_effect"][below_step] == pytest.approx(
+        step_config.rsf.middle.direct_effect
+    )
+    assert profile["direct_effect"][at_step] == pytest.approx(
+        step_config.rsf.leading.direct_effect
+    )
 
 
 def test_normal_dip_profile_is_linear_on_the_normal_loading_face():

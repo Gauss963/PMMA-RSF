@@ -237,3 +237,15 @@ sweeps, and the 75 ms half-cosine shear-displacement ramp, RSF profile, 10 ns
 step, output rates, and full-fault rupture criterion are unchanged. These cases
 explicitly set `normal_loading_mode = "stress"`; older TOMLs default to
 displacement control so their behavior is preserved.
+
+TS0256 through TS0271 use the TS0240 force-controlled configuration at a fixed
+16 MPa normal traction and isolate the length of the leading-edge RSF
+transition. The final 30 mm leading plateau and its RSF parameters remain
+fixed, while `leading_transition_length` decreases linearly from 100 to 0 mm
+in 16 values. Positive lengths use the standard half-cosine interpolation from
+the middle VW law to the leading law. TS0271 sets the length to exactly zero,
+which produces a direct parameter step at y=470 mm without evaluating a
+half-cosine transition. Geometry, loading-end and middle RSF laws, 75 ms shear
+ramp, 10 ns step, output rates, and full-fault rupture criterion are otherwise
+identical to TS0240. The completed TS0240 input is retained at its historical
+17 MPa setting; TS0256 is the reproducible 16 MPa baseline for this sweep.
