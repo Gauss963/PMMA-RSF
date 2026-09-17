@@ -17,6 +17,7 @@ def test_non_gb200_slurm_scripts_leave_memory_allocation_to_scheduler():
         "PMMA-RSF-GB200-R1-LEADING-EDGE-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-LEADING-TRANSITION-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-CHAMFER-DEPTH-SWEEP.slurm",
+        "PMMA-RSF-GB200-R1-CZM-XC-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-NORMAL-DIP20-OUTER-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-NORMAL-DIP-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-NORMAL-STRESS-SWEEP.slurm",
@@ -373,6 +374,37 @@ def test_gb200_ts0240_leading_transition_sweep_uses_single_gpu_tasks():
     assert "Zero-length transition did not step" in content
 
     assert "run_number=$((255 + SWEEP_INDEX))" in rank_runner
+    assert 'RUN_DIR="$ROOT/runs/$run_id"' in rank_runner
+    assert "tatva.pmma.mpi" not in rank_runner
+    assert "mpi4py" not in rank_runner
+    assert "XLA_PYTHON_CLIENT_MEM_FRACTION=0.90" in rank_runner
+    assert "XLA_FLAGS=--xla_gpu_enable_command_buffer=" in rank_runner
+    assert "refusing automatic HDF5 resume" in rank_runner
+
+
+def test_gb200_ts0271_czm_xc_sweep_uses_single_gpu_tasks():
+    content = (
+        ROOT / "slurm/PMMA-RSF-GB200-R1-CZM-XC-SWEEP.slurm"
+    ).read_text(encoding="utf-8")
+    rank_runner = (
+        ROOT / "scripts/run_gb200_ts0271_czm_xc_sweep_rank.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "#SBATCH --partition=gb200-r1" in content
+    assert "#SBATCH --nodes=4" in content
+    assert "#SBATCH --ntasks=16" in content
+    assert "#SBATCH --ntasks-per-node=4" in content
+    assert "#SBATCH --gres=gpu:4" in content
+    assert "#SBATCH --mem=800G" in content
+    assert "#SBATCH --time=16:00:00" in content
+    assert "--mpi=none" in content
+    assert "--gpus-per-task=1" in content
+    assert "generate_ts0271_czm_xc_sweep_cases.py --check" in content
+    assert "range(272, 288)" in content
+    assert "expected_xc = cohesive_zone_size(index)" in content
+    assert "minimum_lb_mm / reference.numerics.mesh_size < 5.0" in content
+
+    assert "run_number=$((271 + SWEEP_INDEX))" in rank_runner
     assert 'RUN_DIR="$ROOT/runs/$run_id"' in rank_runner
     assert "tatva.pmma.mpi" not in rank_runner
     assert "mpi4py" not in rank_runner

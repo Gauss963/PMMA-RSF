@@ -249,3 +249,15 @@ half-cosine transition. Geometry, loading-end and middle RSF laws, 75 ms shear
 ramp, 10 ns step, output rates, and full-fault rupture criterion are otherwise
 identical to TS0240. The completed TS0240 input is retained at its historical
 17 MPa setting; TS0256 is the reproducible 16 MPa baseline for this sweep.
+
+TS0272 through TS0287 form a prescribed cohesive-zone-size sweep around the
+successful TS0271 configuration. The CZM anchor `X_c` increases from 3.6 to
+6.6 mm in exact 0.2 mm increments; TS0279 is the exact 5.0 mm TS0271 control.
+Tatva does not receive `X_c` directly. At fixed 16 MPa normal stress and fixed
+RSF `a` and `b`, the generator converts it to a shared characteristic slip
+`D_c = 0.0003765049284695767 * X_c / 5` mm for the loading, middle, and leading
+zones. The rupture-stop slip is changed to the same local `D_c`; all other
+geometry, loading, RSF, numerical, and output parameters remain unchanged.
+The 3.6 mm lower endpoint retains 5.24 cells across the middle-zone process
+length `L_b` on the 0.5 mm mesh. Each independent case is assigned one GB200
+GPU without MPI; the estimated complete sweep dump is approximately 1.395 TB.

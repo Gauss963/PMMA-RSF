@@ -27,7 +27,13 @@ from tatva.pmma.runner import (
     run_case,
 )
 from tatva.pmma.model import BlockSpec
-from CohesiveZoneModel.Lc_estimate import RSF_D_c, RSF_ZONES, mm
+from CohesiveZoneModel.Lc_estimate import (
+    CZM_COHESIVE_ZONE_SIZE,
+    RSF_D_c,
+    RSF_ZONES,
+    mm,
+    process_zone_size,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -88,6 +94,10 @@ TS0163_NORMAL_STRESS_SWEEP_CASES = [
 TS0240_LEADING_TRANSITION_SWEEP_CASES = [
     ROOT / "cases" / f"rsf_{run:04d}_leading_transition_{index:02d}.toml"
     for index, run in enumerate(range(256, 272), start=1)
+]
+TS0271_CZM_XC_SWEEP_CASES = [
+    ROOT / "cases" / f"rsf_{run:04d}_czm_xc_{index:02d}.toml"
+    for index, run in enumerate(range(272, 288), start=1)
 ]
 
 
@@ -588,6 +598,60 @@ def test_ts0240_leading_transition_sweep_uses_16_mpa_and_ends_in_a_step():
     assert profile["direct_effect"][at_step] == pytest.approx(
         step_config.rsf.leading.direct_effect
     )
+
+
+def test_ts0271_czm_xc_sweep_scales_only_dc_and_stop_slip():
+    baseline = load_case_config(TS0240_LEADING_TRANSITION_SWEEP_CASES[-1])
+    baseline_payload = asdict(baseline)
+    baseline_payload["name"] = "normalized"
+    baseline_payload["loading"].pop("stop_slip")
+    for zone_name in ("loading", "middle", "leading"):
+        baseline_payload["rsf"][zone_name].pop("characteristic_slip")
+
+    assert CZM_COHESIVE_ZONE_SIZE / mm == pytest.approx(5.0)
+    assert baseline.rsf.middle.characteristic_slip == pytest.approx(RSF_D_c / mm)
+
+    for index, path in enumerate(TS0271_CZM_XC_SWEEP_CASES, start=1):
+        config = load_case_config(path)
+        expected_xc_mm = 3.6 + 0.2 * (index - 1)
+        expected_dc_mm = baseline.rsf.middle.characteristic_slip * (
+            expected_xc_mm / 5.0
+        )
+        payload = asdict(config)
+        stop_slip = payload["loading"].pop("stop_slip")
+        swept_dc = {
+            zone_name: payload["rsf"][zone_name].pop("characteristic_slip")
+            for zone_name in ("loading", "middle", "leading")
+        }
+        payload["name"] = "normalized"
+
+        assert payload == baseline_payload
+        assert stop_slip == pytest.approx(expected_dc_mm)
+        assert all(
+            value == pytest.approx(expected_dc_mm)
+            for value in swept_dc.values()
+        )
+        assert config.name == (
+            f"pmma-rsf-{271 + index:04d}-czm-xc-{index:02d}of16"
+        )
+        estimate = estimate_case_size(config)
+        assert (
+            estimate["estimated_uncompressed_tb"]
+            * config.output.estimated_compression_ratio
+            < config.output.maximum_dump_tb
+        )
+
+    baseline_repeat = load_case_config(TS0271_CZM_XC_SWEEP_CASES[7])
+    expected = asdict(baseline)
+    expected["name"] = baseline_repeat.name
+    assert asdict(baseline_repeat) == expected
+
+    minimum = load_case_config(TS0271_CZM_XC_SWEEP_CASES[0])
+    minimum_lb_mm = process_zone_size(
+        minimum.rsf.middle.state_effect,
+        minimum.rsf.middle.characteristic_slip * mm,
+    ) / mm
+    assert minimum_lb_mm / minimum.numerics.mesh_size >= 5.0
 
 
 def test_normal_dip_profile_is_linear_on_the_normal_loading_face():
