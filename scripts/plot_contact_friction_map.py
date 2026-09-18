@@ -18,8 +18,7 @@ from plot_rsf_rupture_analysis import optional_linear_arrival_fit
 
 
 MU_COLOR_FLOOR = 0.6
-RUPTURE_FIT_START_MM = 300.0
-RUPTURE_FIT_END_MM = 500.0
+RUPTURE_FIT_START_MM = 200.0
 RUPTURE_SLIP_FRACTION = 1.0
 RUPTURE_ARRIVAL_SPATIAL_MEDIAN_MM = 10.0
 _DEFAULT_MATERIAL = {
@@ -128,9 +127,9 @@ def _add_rupture_speed_fit(
     fit: dict[str, object],
     *,
     fit_start: float = RUPTURE_FIT_START_MM,
-    fit_end: float = RUPTURE_FIT_END_MM,
+    fit_end: float,
 ) -> None:
-    """Overlay sparse D_c arrivals and their tail-segment linear fit."""
+    """Overlay sparse D_c arrivals and their pre-VS linear fit."""
     if not bool(fit["available"]):
         return
 
@@ -166,7 +165,7 @@ def _add_rupture_speed_fit(
         0.975,
         0.965,
         (
-            rf"Rupture fit, {fit_start:.0f}-{fit_end:.0f} mm"
+            rf"Rupture fit, {fit_start:.0f}-{fit_end:.1f} mm (VS excluded)"
             "\n"
             rf"$\Delta\delta=D_c$: "
             rf"$v_r={float(fit['speed_m_per_s']):.1f}$ m s$^{{-1}}$"
@@ -252,6 +251,30 @@ def _spatial_median(
     return result
 
 
+def _fit_end_before_leading_vs(
+    contact_y: np.ndarray,
+    profile_spec: dict[str, object],
+) -> tuple[float, float | None]:
+    """Return the last contact node before a velocity-strengthening tail."""
+    contact_y = np.asarray(contact_y, dtype=np.float64)
+    y_max = float(np.max(contact_y))
+    leading = profile_spec.get("leading", {})
+    leading_length = float(profile_spec.get("leading_length", 0.0))
+    has_leading_vs = (
+        isinstance(leading, dict)
+        and float(leading.get("a", 0.0)) > float(leading.get("b", 0.0))
+        and leading_length > 0.0
+    )
+    if not has_leading_vs:
+        return y_max, None
+
+    vs_start = y_max - leading_length
+    eligible = contact_y[contact_y < vs_start]
+    if eligible.size == 0:
+        raise ValueError("No contact node remains before the leading VS region.")
+    return float(np.max(eligible)), float(vs_start)
+
+
 def _save_with_png(fig: plt.Figure, output_path: Path) -> Path:
     fig.savefig(output_path, bbox_inches="tight", pad_inches=0.04)
     png_path = output_path.with_suffix(".png")
@@ -320,6 +343,7 @@ def plot_mu_eff_maps(
         pressure_steps = int(h5.attrs["pressure_steps"]) if "pressure_steps" in h5.attrs else 0
         cumulative_slip = np.asarray(h5["interface/cumulative_slip"], dtype=np.float32)
         friction_law = str(h5.attrs.get("friction_law", "slip-weakening"))
+        profile_spec = json.loads(str(h5.attrs.get("rsf_profile_spec_json", "{}")))
         characteristic_slip = (
             np.asarray(
                 h5["interface/rsf_characteristic_slip_profile"],
@@ -366,11 +390,15 @@ def plot_mu_eff_maps(
             y_sorted,
             rupture_arrival_sorted,
         )
+    rupture_fit_end, leading_vs_start = _fit_end_before_leading_vs(
+        y_sorted,
+        profile_spec,
+    )
     rupture_fit = optional_linear_arrival_fit(
         y_sorted,
         rupture_arrival_sorted,
         RUPTURE_FIT_START_MM,
-        RUPTURE_FIT_END_MM,
+        rupture_fit_end,
     )
     y_edges = _cell_edges(y_sorted)
     time_edges = _cell_edges(time_ms)
@@ -496,6 +524,7 @@ def plot_mu_eff_maps(
         y_sorted,
         rupture_arrival_sorted,
         rupture_fit,
+        fit_end=rupture_fit_end,
     )
     _add_wave_speed_guides(
         ax_shear,
@@ -519,13 +548,14 @@ def plot_mu_eff_maps(
         "rayleigh_80_percent_speed_m_per_s": 0.8 * wave_speeds["c_r"],
         "rayleigh_50_percent_speed_m_per_s": 0.5 * wave_speeds["c_r"],
         "shear_wave_speed_m_per_s": wave_speeds["c_s"],
-        "rupture_fit_interval_mm": [RUPTURE_FIT_START_MM, RUPTURE_FIT_END_MM],
+        "rupture_fit_interval_mm": [RUPTURE_FIT_START_MM, rupture_fit_end],
+        "rupture_fit_leading_vs_start_mm": leading_vs_start,
         "rupture_fit_arrival_definition": "first post-shear cumulative slip = D_c",
         "rupture_fit_spatial_median_width_mm": RUPTURE_ARRIVAL_SPATIAL_MEDIAN_MM,
         "rupture_fit_available": bool(rupture_fit["available"]),
         "rupture_fit_point_count": int(rupture_fit["finite_point_count"]),
-        "rupture_speed_300_500_m_per_s": rupture_fit["speed_m_per_s"],
-        "rupture_speed_300_500_r_squared": rupture_fit["r_squared"],
+        "rupture_speed_fit_m_per_s": rupture_fit["speed_m_per_s"],
+        "rupture_speed_fit_r_squared": rupture_fit["r_squared"],
         "mu_min_normal_end": normal_end_min,
         "mu_min_final": final_min,
         "mu_mean_normal_end": float(mu_eff[normal_end_idx].mean()) if normal_end_idx is not None else float("nan"),

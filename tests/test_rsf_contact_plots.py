@@ -15,6 +15,7 @@ from plot_contact_friction_map import (  # noqa: E402
     _add_rupture_speed_fit,
     _add_wave_speed_guides,
     _effective_friction_colormap,
+    _fit_end_before_leading_vs,
     _first_slip_distance_crossing,
     _spatial_median,
     plot_mu_eff_maps,
@@ -211,20 +212,35 @@ def test_wave_speed_ruler_uses_common_origin_and_physical_travel_times():
     plt.close(fig)
 
 
-def test_rupture_speed_fit_overlay_uses_300_to_500_mm():
-    position = np.linspace(0.0, 500.0, 101)
+def test_rupture_speed_fit_overlay_uses_200_mm_to_pre_vs():
+    position = np.arange(0.0, 500.5, 0.5)
     arrival = 4.0 + position / 125.0
-    fit = optional_linear_arrival_fit(position, arrival, 300.0, 500.0)
+    fit = optional_linear_arrival_fit(position, arrival, 200.0, 469.5)
     fig, axis = plt.subplots()
 
-    _add_rupture_speed_fit(axis, position, arrival, fit)
+    _add_rupture_speed_fit(axis, position, arrival, fit, fit_end=469.5)
 
     assert fit["speed_m_per_s"] == pytest.approx(125.0)
     assert len(axis.get_lines()) == 1
-    np.testing.assert_allclose(axis.get_lines()[0].get_xdata()[[0, -1]], [300.0, 500.0])
+    np.testing.assert_allclose(axis.get_lines()[0].get_xdata()[[0, -1]], [200.0, 469.5])
     assert len(axis.collections) == 1
     assert "125.0" in axis.texts[0].get_text()
+    assert "VS excluded" in axis.texts[0].get_text()
     plt.close(fig)
+
+
+def test_rupture_fit_ends_at_last_node_before_leading_vs():
+    position = np.arange(0.0, 500.5, 0.5)
+    fit_end, vs_start = _fit_end_before_leading_vs(
+        position,
+        {
+            "leading_length": 30.0,
+            "leading": {"a": 0.0067, "b": 0.0050},
+        },
+    )
+
+    assert vs_start == pytest.approx(470.0)
+    assert fit_end == pytest.approx(469.5)
 
 
 def test_dc_arrival_interpolates_and_spatial_median_removes_node_spike():
