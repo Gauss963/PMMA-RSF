@@ -99,6 +99,10 @@ TS0271_CZM_XC_SWEEP_CASES = [
     ROOT / "cases" / f"rsf_{run:04d}_czm_xc_{index:02d}.toml"
     for index, run in enumerate(range(272, 288), start=1)
 ]
+TS0271_LOADING_VN_SWEEP_CASES = [
+    ROOT / "cases" / f"rsf_{run:04d}_loading_vn_{index:02d}.toml"
+    for index, run in enumerate(range(288, 304), start=1)
+]
 
 
 def test_run_directory_sequence_starts_at_ts0117_and_increments(tmp_path):
@@ -652,6 +656,53 @@ def test_ts0271_czm_xc_sweep_scales_only_dc_and_stop_slip():
         minimum.rsf.middle.characteristic_slip * mm,
     ) / mm
     assert minimum_lb_mm / minimum.numerics.mesh_size >= 5.0
+
+
+def test_ts0271_loading_vn_sweep_changes_only_loading_ab_at_fixed_xc():
+    baseline = load_case_config(TS0240_LEADING_TRANSITION_SWEEP_CASES[-1])
+    baseline_payload = asdict(baseline)
+    baseline_payload["name"] = "normalized"
+    baseline_payload["rsf"].pop("loading")
+
+    for index, path in enumerate(TS0271_LOADING_VN_SWEEP_CASES, start=1):
+        config = load_case_config(path)
+        fraction = index / 16.0
+        expected_a = 0.005 + fraction * (0.004 - 0.005)
+        expected_b = 0.025819400653936703 + fraction * (
+            0.004 - 0.025819400653936703
+        )
+        payload = asdict(config)
+        loading = payload["rsf"].pop("loading")
+        payload["name"] = "normalized"
+
+        assert payload == baseline_payload
+        assert loading["direct_effect"] == pytest.approx(expected_a)
+        assert loading["state_effect"] == pytest.approx(expected_b)
+        assert loading["characteristic_slip"] == pytest.approx(
+            baseline.rsf.middle.characteristic_slip
+        )
+        assert config.loading.stop_slip == pytest.approx(
+            baseline.loading.stop_slip
+        )
+        assert config.name == (
+            f"pmma-rsf-{287 + index:04d}-loading-vn-{index:02d}of16"
+        )
+        estimate = estimate_case_size(config)
+        assert (
+            estimate["estimated_uncompressed_tb"]
+            * config.output.estimated_compression_ratio
+            < config.output.maximum_dump_tb
+        )
+
+    first = load_case_config(TS0271_LOADING_VN_SWEEP_CASES[0])
+    final = load_case_config(TS0271_LOADING_VN_SWEEP_CASES[-1])
+    assert first.rsf.loading.direct_effect < baseline.rsf.loading.direct_effect
+    assert first.rsf.loading.state_effect < baseline.rsf.loading.state_effect
+    assert final.rsf.loading.direct_effect == pytest.approx(0.004)
+    assert final.rsf.loading.state_effect == pytest.approx(0.004)
+    assert final.rsf.loading.direct_effect == pytest.approx(
+        final.rsf.loading.state_effect
+    )
 
 
 def test_normal_dip_profile_is_linear_on_the_normal_loading_face():
