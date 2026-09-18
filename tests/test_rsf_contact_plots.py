@@ -9,7 +9,11 @@ import pytest
 PLOT_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(PLOT_DIR))
 
-from plot_contact_friction_map import plot_mu_eff_maps  # noqa: E402
+from plot_contact_friction_map import (  # noqa: E402
+    MU_COLOR_FLOOR,
+    _effective_friction_colormap,
+    plot_mu_eff_maps,
+)
 from plot_contact_mu_disp import plot_contact_mu_disp  # noqa: E402
 from plot_rsf_rupture_analysis import (  # noqa: E402
     _plot_speed,
@@ -155,7 +159,19 @@ def test_contact_plots_use_saved_rsf_coefficient(tmp_path):
     path_stats = plot_contact_mu_disp(input_path, tmp_path / "path.pdf")
 
     assert map_stats["mu_min_final"] == pytest.approx(0.32)
+    assert map_stats["mu_color_floor"] == pytest.approx(0.6)
+    assert map_stats["rayleigh_wave_speed_m_per_s"] == pytest.approx(1519.1859)
+    assert map_stats["shear_wave_speed_m_per_s"] == pytest.approx(1667.6101)
     assert path_stats["final_mu"] == pytest.approx(0.32)
     assert (tmp_path / "map.pdf").exists()
+    assert (tmp_path / "map.png").exists()
     assert (tmp_path / "phase-map.pdf").exists()
+    assert (tmp_path / "phase-map.png").exists()
     assert (tmp_path / "path.pdf").exists()
+
+
+def test_effective_friction_colormap_marks_values_below_floor_black():
+    cmap = _effective_friction_colormap()
+
+    assert MU_COLOR_FLOOR == pytest.approx(0.6)
+    np.testing.assert_allclose(cmap(-0.1), (0.0, 0.0, 0.0, 1.0))

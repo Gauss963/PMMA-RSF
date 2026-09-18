@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 import h5py
@@ -12,6 +13,97 @@ import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
 
 from tatva.pmma.plotting import configure_journal_style, panel_label, style_axis
+from plot_rupture_speed_and_fault_profile import material_wave_speeds
+
+
+MU_COLOR_FLOOR = 0.6
+_DEFAULT_MATERIAL = {
+    "young_modulus": 7662.0,
+    "poisson_ratio": 0.2,
+    "density": 1.148e-9,
+}
+
+
+def _effective_friction_colormap():
+    cmap = matplotlib.colormaps["viridis"].copy()
+    cmap.set_under("black")
+    return cmap
+
+
+def _read_wave_speeds(input_path: Path, h5: h5py.File) -> dict[str, float]:
+    material = dict(_DEFAULT_MATERIAL)
+    resolved_case = input_path.parent.parent / "input" / "resolved_case.json"
+    if resolved_case.is_file():
+        payload = json.loads(resolved_case.read_text(encoding="utf-8"))
+        material.update(payload.get("material", {}))
+    for key, legacy_key in (
+        ("young_modulus", "E"),
+        ("poisson_ratio", "nu"),
+        ("density", "rho"),
+    ):
+        value = h5.attrs.get(key, h5.attrs.get(legacy_key))
+        if value is not None:
+            material[key] = float(value)
+    return material_wave_speeds(
+        float(material["young_modulus"]),
+        float(material["poisson_ratio"]),
+        float(material["density"]),
+    )
+
+
+def _add_wave_speed_guides(
+    axis: plt.Axes,
+    y_bounds: tuple[float, float],
+    time_bounds: tuple[float, float],
+    wave_speeds: dict[str, float],
+) -> None:
+    """Add physically scaled slope references without implying arrival times."""
+    y_min, y_max = y_bounds
+    time_min, time_max = time_bounds
+    y_span = y_max - y_min
+    time_span = time_max - time_min
+    if y_span <= 0.0 or time_span <= 0.0:
+        return
+
+    guide_y = np.linspace(y_min + 0.06 * y_span, y_min + 0.40 * y_span, 100)
+    for key, start_fraction, color, line_style in (
+        ("c_r", 0.88, "white", (0, (5, 2))),
+        ("c_s", 0.80, "#ffb000", (0, (2, 1.5))),
+    ):
+        speed = float(wave_speeds[key])
+        guide_time = (
+            time_min
+            + start_fraction * time_span
+            + (guide_y - guide_y[0]) / speed
+        )
+        label = rf"$C_{{{'R' if key == 'c_r' else 'S'}}}$ = {speed / 1e3:.2f} km s$^{{-1}}$"
+        axis.plot(
+            guide_y,
+            guide_time,
+            color=color,
+            lw=1.35,
+            ls=line_style,
+            zorder=5,
+            solid_capstyle="round",
+        )
+        axis.text(
+            guide_y[-1] + 0.015 * y_span,
+            guide_time[-1],
+            label,
+            color=color,
+            fontsize=7.5,
+            va="center",
+            ha="left",
+            zorder=6,
+        )
+
+
+def _save_with_png(fig: plt.Figure, output_path: Path) -> Path:
+    fig.savefig(output_path, bbox_inches="tight", pad_inches=0.04)
+    png_path = output_path.with_suffix(".png")
+    if png_path != output_path:
+        fig.savefig(png_path, bbox_inches="tight", pad_inches=0.04)
+    return png_path
 
 
 def _cell_edges(values: np.ndarray) -> np.ndarray:
@@ -74,6 +166,7 @@ def plot_mu_eff_maps(
         pressure_steps = int(h5.attrs["pressure_steps"]) if "pressure_steps" in h5.attrs else 0
         cumulative_slip = np.asarray(h5["interface/cumulative_slip"], dtype=np.float32)
         friction_law = str(h5.attrs.get("friction_law", "slip-weakening"))
+        wave_speeds = _read_wave_speeds(input_path, h5)
         saved_mu_eff = (
             np.asarray(h5["interface/friction_coefficient"], dtype=np.float32)
             if "friction_coefficient" in h5["interface"]
@@ -112,6 +205,8 @@ def plot_mu_eff_maps(
         )
     mu_plot_min = float(np.nanmin(mu_eff))
     mu_plot_max = float(np.nanmax(mu_eff))
+    mu_display_max = max(mu_plot_max, MU_COLOR_FLOOR + 1.0e-6)
+    friction_cmap = _effective_friction_colormap()
 
     normal_idx = np.where(phase_id == 1)[0]
     normal_end_idx = int(normal_idx[-1]) if normal_idx.size else None
@@ -121,13 +216,13 @@ def plot_mu_eff_maps(
         y_edges,
         time_edges,
         mu_eff,
-        cmap="viridis",
-        vmin=mu_plot_min,
-        vmax=mu_plot_max,
+        cmap=friction_cmap,
+        vmin=MU_COLOR_FLOOR,
+        vmax=mu_display_max,
         shading="auto",
         rasterized=True,
     )
-    cbar = fig.colorbar(im, ax=ax, pad=0.02)
+    cbar = fig.colorbar(im, ax=ax, pad=0.02, extend="min")
     cbar.set_label("Effective friction coefficient")
 
     if normal_end_idx is not None:
@@ -147,7 +242,7 @@ def plot_mu_eff_maps(
     ax.set_xlabel(r"Position along fault, $y$ [mm]")
     ax.set_ylabel("Time [ms]")
     style_axis(ax, grid=False)
-    fig.savefig(output_path, bbox_inches="tight", pad_inches=0.04)
+    output_png_path = _save_with_png(fig, output_path)
     plt.close(fig)
 
     normal_mask = phase_id == 1
@@ -190,9 +285,9 @@ def plot_mu_eff_maps(
         y_edges,
         shear_time_edges,
         mu_eff[shear_mask],
-        cmap="viridis",
-        vmin=mu_plot_min,
-        vmax=mu_plot_max,
+        cmap=friction_cmap,
+        vmin=MU_COLOR_FLOOR,
+        vmax=mu_display_max,
         shading="auto",
         rasterized=True,
     )
@@ -203,9 +298,9 @@ def plot_mu_eff_maps(
         y_edges,
         normal_time_edges,
         mu_eff[normal_mask],
-        cmap="viridis",
-        vmin=mu_plot_min,
-        vmax=mu_plot_max,
+        cmap=friction_cmap,
+        vmin=MU_COLOR_FLOOR,
+        vmax=mu_display_max,
         shading="auto",
         rasterized=True,
     )
@@ -215,15 +310,26 @@ def plot_mu_eff_maps(
     plt.setp(ax_shear.get_xticklabels(), visible=False)
     style_axis(ax_shear, grid=False)
     style_axis(ax_normal, grid=False)
+    _add_wave_speed_guides(
+        ax_shear,
+        (float(y_edges[0]), float(y_edges[-1])),
+        (float(shear_time_edges[0]), float(shear_time_edges[-1])),
+        wave_speeds,
+    )
 
-    cbar = fig.colorbar(normal_im, cax=cax)
+    cbar = fig.colorbar(normal_im, cax=cax, extend="min")
     cbar.set_label("Effective friction coefficient")
-    fig.savefig(phase_split_output_path, bbox_inches="tight", pad_inches=0.04)
+    phase_split_png_path = _save_with_png(fig, phase_split_output_path)
     plt.close(fig)
 
     return {
         "output": str(output_path),
+        "output_png": str(output_png_path),
         "phase_split_output": str(phase_split_output_path),
+        "phase_split_output_png": str(phase_split_png_path),
+        "mu_color_floor": MU_COLOR_FLOOR,
+        "rayleigh_wave_speed_m_per_s": wave_speeds["c_r"],
+        "shear_wave_speed_m_per_s": wave_speeds["c_s"],
         "mu_min_normal_end": normal_end_min,
         "mu_min_final": final_min,
         "mu_mean_normal_end": float(mu_eff[normal_end_idx].mean()) if normal_end_idx is not None else float("nan"),

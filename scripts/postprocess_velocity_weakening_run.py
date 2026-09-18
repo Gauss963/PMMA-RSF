@@ -103,7 +103,9 @@ def main() -> int:
     ]
     mu_map_paths = [
         plot_dir / "mu_eff_map.pdf",
+        plot_dir / "mu_eff_map.png",
         plot_dir / "mu_eff_map_phase_split.pdf",
+        plot_dir / "mu_eff_map_phase_split.png",
     ]
     tasks.append(
         run_callable_task(
@@ -113,7 +115,7 @@ def main() -> int:
                 lambda: plot_mu_eff_maps(
                     input_path,
                     mu_map_paths[0],
-                    mu_map_paths[1],
+                    mu_map_paths[2],
                 ),
             ),
             expected_outputs=mu_map_paths,
@@ -235,7 +237,9 @@ def main() -> int:
             "mu_maps",
             {
                 "output": str(mu_map_paths[0]),
-                "phase_split_output": str(mu_map_paths[1]),
+                "output_png": str(mu_map_paths[1]),
+                "phase_split_output": str(mu_map_paths[2]),
+                "phase_split_output_png": str(mu_map_paths[3]),
             },
         ),
         "mu_disp": task_values.get(

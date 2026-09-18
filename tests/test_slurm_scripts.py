@@ -143,6 +143,25 @@ def test_single_run_cpu_analysis_uses_current_f1_checkout_without_animation():
     assert "make_stress_animation.py" not in content
 
 
+def test_cpu_mu_map_sweep_only_renders_requested_friction_maps():
+    content = (ROOT / "slurm/PMMA-MU-MAP-SWEEP-CPU.slurm").read_text(
+        encoding="utf-8"
+    )
+
+    assert "#SBATCH --partition=hm112" in content
+    assert "#SBATCH --cpus-per-task=16" in content
+    assert "ROOT=/work1/gauss112/tatva" in content
+    assert "RUN_FIRST=${RUN_FIRST:-272}" in content
+    assert "RUN_LAST=${RUN_LAST:-287}" in content
+    assert "WORKERS=${WORKERS:-4}" in content
+    assert "plot_contact_friction_map.py" in content
+    assert "mu_eff_map_phase_split.pdf" in content
+    assert "mu_eff_map_phase_split.png" in content
+    assert "postprocess_velocity_weakening_run.py" not in content
+    assert "render_stress_frames.py" not in content
+    assert "make_stress_animation.py" not in content
+
+
 def test_gb200_shear_rate_sweep_uses_independent_single_gpu_tasks():
     content = (
         ROOT / "slurm/PMMA-RSF-GB200-R1-SHEAR-RATE-SWEEP.slurm"
