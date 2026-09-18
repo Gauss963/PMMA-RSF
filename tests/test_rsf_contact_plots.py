@@ -15,6 +15,8 @@ from plot_contact_friction_map import (  # noqa: E402
     _add_rupture_speed_fit,
     _add_wave_speed_guides,
     _effective_friction_colormap,
+    _first_slip_distance_crossing,
+    _spatial_median,
     plot_mu_eff_maps,
 )
 from plot_contact_mu_disp import plot_contact_mu_disp  # noqa: E402
@@ -218,7 +220,32 @@ def test_rupture_speed_fit_overlay_uses_300_to_500_mm():
     _add_rupture_speed_fit(axis, position, arrival, fit)
 
     assert fit["speed_m_per_s"] == pytest.approx(125.0)
-    assert len(axis.get_lines()) == 2
-    np.testing.assert_allclose(axis.get_lines()[1].get_xdata()[[0, -1]], [300.0, 500.0])
+    assert len(axis.get_lines()) == 1
+    np.testing.assert_allclose(axis.get_lines()[0].get_xdata()[[0, -1]], [300.0, 500.0])
+    assert len(axis.collections) == 1
     assert "125.0" in axis.texts[0].get_text()
     plt.close(fig)
+
+
+def test_dc_arrival_interpolates_and_spatial_median_removes_node_spike():
+    time_ms = np.asarray([0.0, 1.0, 2.0])
+    cumulative_slip = np.asarray(
+        [
+            [0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.4, 0.5, 1.1, 0.5, 0.4],
+            [1.4, 1.5, 2.1, 1.5, 1.4],
+        ]
+    )
+    arrivals = _first_slip_distance_crossing(
+        cumulative_slip,
+        time_ms,
+        np.ones(5),
+    )
+    filtered = _spatial_median(
+        np.arange(5, dtype=np.float64),
+        arrivals,
+        width_mm=4.0,
+    )
+
+    assert arrivals[2] == pytest.approx(1.0 / 1.1)
+    assert filtered[2] == pytest.approx(1.5)

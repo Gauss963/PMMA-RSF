@@ -14,16 +14,14 @@ from matplotlib.gridspec import GridSpec
 
 from tatva.pmma.plotting import configure_journal_style, panel_label, style_axis
 from plot_rupture_speed_and_fault_profile import material_wave_speeds
-from plot_rsf_rupture_analysis import (
-    first_velocity_crossing,
-    optional_linear_arrival_fit,
-)
+from plot_rsf_rupture_analysis import optional_linear_arrival_fit
 
 
 MU_COLOR_FLOOR = 0.6
 RUPTURE_FIT_START_MM = 300.0
 RUPTURE_FIT_END_MM = 500.0
-RUPTURE_VELOCITY_THRESHOLD_MM_S = 500.0
+RUPTURE_SLIP_FRACTION = 1.0
+RUPTURE_ARRIVAL_SPATIAL_MEDIAN_MM = 10.0
 _DEFAULT_MATERIAL = {
     "young_modulus": 7662.0,
     "poisson_ratio": 0.2,
@@ -131,23 +129,24 @@ def _add_rupture_speed_fit(
     *,
     fit_start: float = RUPTURE_FIT_START_MM,
     fit_end: float = RUPTURE_FIT_END_MM,
-    velocity_threshold: float = RUPTURE_VELOCITY_THRESHOLD_MM_S,
 ) -> None:
-    """Overlay the measured rupture front and its tail-segment linear fit."""
+    """Overlay sparse D_c arrivals and their tail-segment linear fit."""
     if not bool(fit["available"]):
         return
 
-    fit_mask = (
-        (contact_y >= fit_start)
-        & (contact_y <= fit_end)
-        & np.isfinite(arrival_time_ms)
+    sample_y = np.linspace(fit_start, fit_end, 11)
+    sample_indices = np.asarray(
+        [int(np.argmin(np.abs(contact_y - value))) for value in sample_y],
+        dtype=np.int64,
     )
-    axis.plot(
-        contact_y[fit_mask],
-        arrival_time_ms[fit_mask],
+    finite_samples = np.isfinite(arrival_time_ms[sample_indices])
+    axis.scatter(
+        contact_y[sample_indices][finite_samples],
+        arrival_time_ms[sample_indices][finite_samples],
         color="white",
-        lw=0.8,
-        alpha=0.9,
+        edgecolors="#202124",
+        linewidths=0.35,
+        s=12,
         zorder=7,
     )
     fit_y = np.linspace(fit_start, fit_end, 200)
@@ -169,7 +168,7 @@ def _add_rupture_speed_fit(
         (
             rf"Rupture fit, {fit_start:.0f}-{fit_end:.0f} mm"
             "\n"
-            rf"$|V|={velocity_threshold:g}$ mm s$^{{-1}}$: "
+            rf"$\Delta\delta=D_c$: "
             rf"$v_r={float(fit['speed_m_per_s']):.1f}$ m s$^{{-1}}$"
             "\n"
             rf"$R^2={float(fit['r_squared']):.4f}$"
@@ -187,6 +186,70 @@ def _add_rupture_speed_fit(
         },
         zorder=9,
     )
+
+
+def _first_slip_distance_crossing(
+    cumulative_slip: np.ndarray,
+    time_ms: np.ndarray,
+    critical_slip: np.ndarray,
+    *,
+    fraction: float = RUPTURE_SLIP_FRACTION,
+) -> np.ndarray:
+    """Interpolate the first post-shear crossing of a local slip distance."""
+    slip = np.asarray(cumulative_slip, dtype=np.float64)
+    times = np.asarray(time_ms, dtype=np.float64)
+    threshold = fraction * np.asarray(critical_slip, dtype=np.float64)
+    if slip.ndim != 2 or times.ndim != 1 or slip.shape[0] != times.size:
+        raise ValueError("Slip history and time coordinates have incompatible shapes.")
+    if slip.shape[1] != threshold.size:
+        raise ValueError("The critical-slip profile does not match the contact line.")
+    if slip.shape[0] < 2:
+        return np.full(slip.shape[1], np.nan, dtype=np.float64)
+
+    increment = slip - slip[0]
+    crossed = increment >= threshold[None, :]
+    available = np.any(crossed, axis=0)
+    arrivals = np.full(slip.shape[1], np.nan, dtype=np.float64)
+    stations = np.flatnonzero(available)
+    crossing_indices = np.argmax(crossed[:, available], axis=0)
+    for station, crossing_index in zip(stations, crossing_indices, strict=True):
+        if crossing_index == 0:
+            arrivals[station] = times[0]
+            continue
+        lower_slip = increment[crossing_index - 1, station]
+        upper_slip = increment[crossing_index, station]
+        weight = np.clip(
+            (threshold[station] - lower_slip)
+            / max(upper_slip - lower_slip, 1.0e-30),
+            0.0,
+            1.0,
+        )
+        arrivals[station] = times[crossing_index - 1] + weight * (
+            times[crossing_index] - times[crossing_index - 1]
+        )
+    return arrivals
+
+
+def _spatial_median(
+    coordinate: np.ndarray,
+    values: np.ndarray,
+    *,
+    width_mm: float = RUPTURE_ARRIVAL_SPATIAL_MEDIAN_MM,
+) -> np.ndarray:
+    """Suppress isolated contact-node arrivals without moving a coherent front."""
+    coordinate = np.asarray(coordinate, dtype=np.float64)
+    values = np.asarray(values, dtype=np.float64)
+    result = np.full(values.shape, np.nan, dtype=np.float64)
+    half_width = 0.5 * width_mm
+    for index, position in enumerate(coordinate):
+        local = (
+            (coordinate >= position - half_width)
+            & (coordinate <= position + half_width)
+            & np.isfinite(values)
+        )
+        if np.any(local):
+            result[index] = float(np.median(values[local]))
+    return result
 
 
 def _save_with_png(fig: plt.Figure, output_path: Path) -> Path:
@@ -257,6 +320,14 @@ def plot_mu_eff_maps(
         pressure_steps = int(h5.attrs["pressure_steps"]) if "pressure_steps" in h5.attrs else 0
         cumulative_slip = np.asarray(h5["interface/cumulative_slip"], dtype=np.float32)
         friction_law = str(h5.attrs.get("friction_law", "slip-weakening"))
+        characteristic_slip = (
+            np.asarray(
+                h5["interface/rsf_characteristic_slip_profile"],
+                dtype=np.float64,
+            )
+            if "rsf_characteristic_slip_profile" in h5["interface"]
+            else None
+        )
         wave_speeds = _read_wave_speeds(input_path, h5)
         saved_mu_eff = (
             np.asarray(h5["interface/friction_coefficient"], dtype=np.float32)
@@ -282,20 +353,19 @@ def plot_mu_eff_maps(
         time_ms = absolute_steps.astype(np.float64) * dt * 1e3
     else:
         time_ms = history[:, 0] * 1e3
-    shear_indices = np.flatnonzero(phase_id == 2)
     rupture_arrival_sorted = np.full(y_sorted.shape, np.nan, dtype=np.float64)
-    if shear_indices.size >= 2:
-        shear_elapsed_ms = time_ms - float(time_ms[shear_indices[0]])
-        with h5py.File(input_path, "r") as h5:
-            if "slip_rate" in h5["interface"]:
-                rupture_arrival = first_velocity_crossing(
-                    h5["interface/slip_rate"],
-                    shear_indices,
-                    shear_elapsed_ms,
-                    RUPTURE_VELOCITY_THRESHOLD_MM_S,
-                    chunk_frames=2048,
-                )
-                rupture_arrival_sorted = rupture_arrival[order]
+    shear_indices = np.flatnonzero(phase_id == 2)
+    if characteristic_slip is not None and shear_indices.size >= 2:
+        shear_elapsed_ms = time_ms[shear_indices] - float(time_ms[shear_indices[0]])
+        rupture_arrival_sorted = _first_slip_distance_crossing(
+            cum_sorted[shear_indices],
+            shear_elapsed_ms,
+            characteristic_slip[order],
+        )
+        rupture_arrival_sorted = _spatial_median(
+            y_sorted,
+            rupture_arrival_sorted,
+        )
     rupture_fit = optional_linear_arrival_fit(
         y_sorted,
         rupture_arrival_sorted,
@@ -450,7 +520,8 @@ def plot_mu_eff_maps(
         "rayleigh_50_percent_speed_m_per_s": 0.5 * wave_speeds["c_r"],
         "shear_wave_speed_m_per_s": wave_speeds["c_s"],
         "rupture_fit_interval_mm": [RUPTURE_FIT_START_MM, RUPTURE_FIT_END_MM],
-        "rupture_fit_velocity_threshold_mm_s": RUPTURE_VELOCITY_THRESHOLD_MM_S,
+        "rupture_fit_arrival_definition": "first post-shear cumulative slip = D_c",
+        "rupture_fit_spatial_median_width_mm": RUPTURE_ARRIVAL_SPATIAL_MEDIAN_MM,
         "rupture_fit_available": bool(rupture_fit["available"]),
         "rupture_fit_point_count": int(rupture_fit["finite_point_count"]),
         "rupture_speed_300_500_m_per_s": rupture_fit["speed_m_per_s"],
