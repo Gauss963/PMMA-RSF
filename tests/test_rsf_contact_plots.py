@@ -2,6 +2,7 @@ import sys
 from pathlib import Path
 
 import h5py
+import matplotlib.pyplot as plt
 import numpy as np
 import pytest
 
@@ -11,6 +12,7 @@ sys.path.insert(0, str(PLOT_DIR))
 
 from plot_contact_friction_map import (  # noqa: E402
     MU_COLOR_FLOOR,
+    _add_wave_speed_guides,
     _effective_friction_colormap,
     plot_mu_eff_maps,
 )
@@ -181,3 +183,26 @@ def test_effective_friction_colormap_marks_values_below_floor_black():
 
     assert MU_COLOR_FLOOR == pytest.approx(0.6)
     np.testing.assert_allclose(cmap(-0.1), (0.0, 0.0, 0.0, 1.0))
+
+
+def test_wave_speed_ruler_uses_common_origin_and_physical_travel_times():
+    fig, axis = plt.subplots()
+    ruler = _add_wave_speed_guides(
+        axis,
+        (0.0, 500.0),
+        (0.0, 75.0),
+        {"c_r": 1500.0, "c_s": 1650.0},
+    )
+
+    assert ruler is not None
+    lines = ruler.get_lines()
+    assert len(lines) == 4
+    assert all(line.get_xdata()[0] == pytest.approx(0.0) for line in lines)
+    assert all(line.get_ydata()[0] == pytest.approx(0.0) for line in lines)
+    assert lines[1].get_ydata()[-1] == pytest.approx(500.0 / 1500.0)
+    assert lines[2].get_ydata()[-1] == pytest.approx(500.0 / 1200.0)
+    assert lines[3].get_ydata()[-1] == pytest.approx(500.0 / 750.0)
+    assert lines[3].get_ydata()[-1] == pytest.approx(
+        2.0 * lines[1].get_ydata()[-1]
+    )
+    plt.close(fig)

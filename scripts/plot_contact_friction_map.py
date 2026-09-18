@@ -56,47 +56,64 @@ def _add_wave_speed_guides(
     y_bounds: tuple[float, float],
     time_bounds: tuple[float, float],
     wave_speeds: dict[str, float],
-) -> None:
-    """Add physically scaled slope references without implying arrival times."""
+) -> plt.Axes | None:
+    """Add a physically scaled travel-time ruler for the wave speeds."""
     y_min, y_max = y_bounds
     time_min, time_max = time_bounds
     y_span = y_max - y_min
     time_span = time_max - time_min
     if y_span <= 0.0 or time_span <= 0.0:
-        return
+        return None
 
-    guide_y = np.linspace(y_min + 0.06 * y_span, y_min + 0.40 * y_span, 100)
-    for key, speed_fraction, start_fraction, label, color, line_style in (
-        ("c_s", 1.0, 0.89, r"$C_S$", "#ffb000", (0, (2, 1.5))),
-        ("c_r", 1.0, 0.81, r"$C_R$", "white", (0, (5, 2))),
-        ("c_r", 0.8, 0.73, r"$0.8C_R$", "#56b4e9", (0, (4, 1.5))),
-        ("c_r", 0.5, 0.65, r"$0.5C_R$", "#e78ac3", (0, (1, 1.5))),
-    ):
+    # Across the full map these travel times occupy less than 1% of the shear
+    # phase. A local ruler keeps the units physical while making the slopes
+    # distinguishable instead of presenting them as nearly horizontal swatches.
+    ruler = axis.inset_axes([0.065, 0.63, 0.49, 0.30])
+    guide_distance = np.linspace(0.0, y_span, 100)
+    guide_specs = (
+        ("c_s", 1.0, r"$C_S$", "#ffb000", (0, (2, 1.5))),
+        ("c_r", 1.0, r"$C_R$", "white", (0, (5, 2))),
+        ("c_r", 0.8, r"$0.8C_R$", "#56b4e9", (0, (4, 1.5))),
+        ("c_r", 0.5, r"$0.5C_R$", "#e78ac3", (0, (1, 1.5))),
+    )
+    for key, speed_fraction, label, color, line_style in guide_specs:
         speed = speed_fraction * float(wave_speeds[key])
-        guide_time = (
-            time_min
-            + start_fraction * time_span
-            + (guide_y - guide_y[0]) / speed
-        )
-        axis.plot(
-            guide_y,
-            guide_time,
+        travel_time = guide_distance / speed
+        ruler.plot(
+            guide_distance,
+            travel_time,
             color=color,
-            lw=1.35,
+            lw=1.15,
             ls=line_style,
-            zorder=5,
             solid_capstyle="round",
+            label=rf"{label}  {speed / 1e3:.2f} km s$^{{-1}}$",
         )
-        axis.text(
-            guide_y[-1] + 0.015 * y_span,
-            guide_time[-1],
-            rf"{label} = {speed / 1e3:.2f} km s$^{{-1}}$",
-            color=color,
-            fontsize=7.5,
-            va="center",
-            ha="left",
-            zorder=6,
-        )
+
+    slowest_speed = 0.5 * float(wave_speeds["c_r"])
+    ruler.set_xlim(0.0, y_span)
+    ruler.set_ylim(0.0, 1.08 * y_span / slowest_speed)
+    ruler.set_xlabel(r"Travel distance, $\Delta y$ [mm]", fontsize=6.2, labelpad=1.0)
+    ruler.set_ylabel(r"Travel time, $\Delta t$ [ms]", fontsize=6.2, labelpad=1.0)
+    ruler.set_title("Physical wave-speed slopes", fontsize=6.8, pad=2.0)
+    ruler.set_facecolor((0.02, 0.02, 0.02, 0.88))
+    ruler.tick_params(colors="white", labelsize=5.8, width=0.6, length=2.2, pad=1.5)
+    ruler.xaxis.label.set_color("white")
+    ruler.yaxis.label.set_color("white")
+    ruler.title.set_color("white")
+    for spine in ruler.spines.values():
+        spine.set_color("white")
+        spine.set_linewidth(0.6)
+    legend = ruler.legend(
+        loc="upper left",
+        fontsize=5.7,
+        frameon=False,
+        handlelength=2.4,
+        borderaxespad=0.35,
+        labelspacing=0.25,
+    )
+    for text in legend.get_texts():
+        text.set_color("white")
+    return ruler
 
 
 def _save_with_png(fig: plt.Figure, output_path: Path) -> Path:
