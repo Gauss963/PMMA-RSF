@@ -12,6 +12,7 @@ sys.path.insert(0, str(PLOT_DIR))
 
 from plot_contact_friction_map import (  # noqa: E402
     MU_COLOR_FLOOR,
+    _add_rupture_speed_fit,
     _add_wave_speed_guides,
     _effective_friction_colormap,
     plot_mu_eff_maps,
@@ -205,4 +206,19 @@ def test_wave_speed_ruler_uses_common_origin_and_physical_travel_times():
     assert lines[3].get_ydata()[-1] == pytest.approx(
         2.0 * lines[1].get_ydata()[-1]
     )
+    plt.close(fig)
+
+
+def test_rupture_speed_fit_overlay_uses_300_to_500_mm():
+    position = np.linspace(0.0, 500.0, 101)
+    arrival = 4.0 + position / 125.0
+    fit = optional_linear_arrival_fit(position, arrival, 300.0, 500.0)
+    fig, axis = plt.subplots()
+
+    _add_rupture_speed_fit(axis, position, arrival, fit)
+
+    assert fit["speed_m_per_s"] == pytest.approx(125.0)
+    assert len(axis.get_lines()) == 2
+    np.testing.assert_allclose(axis.get_lines()[1].get_xdata()[[0, -1]], [300.0, 500.0])
+    assert "125.0" in axis.texts[0].get_text()
     plt.close(fig)

@@ -14,9 +14,16 @@ from matplotlib.gridspec import GridSpec
 
 from tatva.pmma.plotting import configure_journal_style, panel_label, style_axis
 from plot_rupture_speed_and_fault_profile import material_wave_speeds
+from plot_rsf_rupture_analysis import (
+    first_velocity_crossing,
+    optional_linear_arrival_fit,
+)
 
 
 MU_COLOR_FLOOR = 0.6
+RUPTURE_FIT_START_MM = 300.0
+RUPTURE_FIT_END_MM = 500.0
+RUPTURE_VELOCITY_THRESHOLD_MM_S = 500.0
 _DEFAULT_MATERIAL = {
     "young_modulus": 7662.0,
     "poisson_ratio": 0.2,
@@ -116,6 +123,72 @@ def _add_wave_speed_guides(
     return ruler
 
 
+def _add_rupture_speed_fit(
+    axis: plt.Axes,
+    contact_y: np.ndarray,
+    arrival_time_ms: np.ndarray,
+    fit: dict[str, object],
+    *,
+    fit_start: float = RUPTURE_FIT_START_MM,
+    fit_end: float = RUPTURE_FIT_END_MM,
+    velocity_threshold: float = RUPTURE_VELOCITY_THRESHOLD_MM_S,
+) -> None:
+    """Overlay the measured rupture front and its tail-segment linear fit."""
+    if not bool(fit["available"]):
+        return
+
+    fit_mask = (
+        (contact_y >= fit_start)
+        & (contact_y <= fit_end)
+        & np.isfinite(arrival_time_ms)
+    )
+    axis.plot(
+        contact_y[fit_mask],
+        arrival_time_ms[fit_mask],
+        color="white",
+        lw=0.8,
+        alpha=0.9,
+        zorder=7,
+    )
+    fit_y = np.linspace(fit_start, fit_end, 200)
+    fit_time = (
+        float(fit["slope_ms_per_mm"]) * fit_y
+        + float(fit["intercept_ms"])
+    )
+    axis.plot(
+        fit_y,
+        fit_time,
+        color="#ff6f00",
+        lw=1.6,
+        ls=(0, (5, 2)),
+        zorder=8,
+    )
+    axis.text(
+        0.975,
+        0.965,
+        (
+            rf"Rupture fit, {fit_start:.0f}-{fit_end:.0f} mm"
+            "\n"
+            rf"$|V|={velocity_threshold:g}$ mm s$^{{-1}}$: "
+            rf"$v_r={float(fit['speed_m_per_s']):.1f}$ m s$^{{-1}}$"
+            "\n"
+            rf"$R^2={float(fit['r_squared']):.4f}$"
+        ),
+        transform=axis.transAxes,
+        ha="right",
+        va="top",
+        fontsize=6.8,
+        color="white",
+        bbox={
+            "boxstyle": "round,pad=0.35",
+            "facecolor": (0.02, 0.02, 0.02, 0.82),
+            "edgecolor": "white",
+            "linewidth": 0.55,
+        },
+        zorder=9,
+    )
+
+
 def _save_with_png(fig: plt.Figure, output_path: Path) -> Path:
     fig.savefig(output_path, bbox_inches="tight", pad_inches=0.04)
     png_path = output_path.with_suffix(".png")
@@ -209,6 +282,26 @@ def plot_mu_eff_maps(
         time_ms = absolute_steps.astype(np.float64) * dt * 1e3
     else:
         time_ms = history[:, 0] * 1e3
+    shear_indices = np.flatnonzero(phase_id == 2)
+    rupture_arrival_sorted = np.full(y_sorted.shape, np.nan, dtype=np.float64)
+    if shear_indices.size >= 2:
+        shear_elapsed_ms = time_ms - float(time_ms[shear_indices[0]])
+        with h5py.File(input_path, "r") as h5:
+            if "slip_rate" in h5["interface"]:
+                rupture_arrival = first_velocity_crossing(
+                    h5["interface/slip_rate"],
+                    shear_indices,
+                    shear_elapsed_ms,
+                    RUPTURE_VELOCITY_THRESHOLD_MM_S,
+                    chunk_frames=2048,
+                )
+                rupture_arrival_sorted = rupture_arrival[order]
+    rupture_fit = optional_linear_arrival_fit(
+        y_sorted,
+        rupture_arrival_sorted,
+        RUPTURE_FIT_START_MM,
+        RUPTURE_FIT_END_MM,
+    )
     y_edges = _cell_edges(y_sorted)
     time_edges = _cell_edges(time_ms)
 
@@ -328,6 +421,12 @@ def plot_mu_eff_maps(
     plt.setp(ax_shear.get_xticklabels(), visible=False)
     style_axis(ax_shear, grid=False)
     style_axis(ax_normal, grid=False)
+    _add_rupture_speed_fit(
+        ax_shear,
+        y_sorted,
+        rupture_arrival_sorted,
+        rupture_fit,
+    )
     _add_wave_speed_guides(
         ax_shear,
         (float(y_edges[0]), float(y_edges[-1])),
@@ -350,6 +449,12 @@ def plot_mu_eff_maps(
         "rayleigh_80_percent_speed_m_per_s": 0.8 * wave_speeds["c_r"],
         "rayleigh_50_percent_speed_m_per_s": 0.5 * wave_speeds["c_r"],
         "shear_wave_speed_m_per_s": wave_speeds["c_s"],
+        "rupture_fit_interval_mm": [RUPTURE_FIT_START_MM, RUPTURE_FIT_END_MM],
+        "rupture_fit_velocity_threshold_mm_s": RUPTURE_VELOCITY_THRESHOLD_MM_S,
+        "rupture_fit_available": bool(rupture_fit["available"]),
+        "rupture_fit_point_count": int(rupture_fit["finite_point_count"]),
+        "rupture_speed_300_500_m_per_s": rupture_fit["speed_m_per_s"],
+        "rupture_speed_300_500_r_squared": rupture_fit["r_squared"],
         "mu_min_normal_end": normal_end_min,
         "mu_min_final": final_min,
         "mu_mean_normal_end": float(mu_eff[normal_end_idx].mean()) if normal_end_idx is not None else float("nan"),
