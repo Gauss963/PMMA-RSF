@@ -161,6 +161,12 @@ def test_contact_plots_use_saved_rsf_coefficient(tmp_path):
     assert map_stats["mu_min_final"] == pytest.approx(0.32)
     assert map_stats["mu_color_floor"] == pytest.approx(0.6)
     assert map_stats["rayleigh_wave_speed_m_per_s"] == pytest.approx(1519.1859)
+    assert map_stats["rayleigh_80_percent_speed_m_per_s"] == pytest.approx(
+        0.8 * 1519.1859
+    )
+    assert map_stats["rayleigh_50_percent_speed_m_per_s"] == pytest.approx(
+        0.5 * 1519.1859
+    )
     assert map_stats["shear_wave_speed_m_per_s"] == pytest.approx(1667.6101)
     assert path_stats["final_mu"] == pytest.approx(0.32)
     assert (tmp_path / "map.pdf").exists()

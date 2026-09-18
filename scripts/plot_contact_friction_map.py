@@ -66,17 +66,18 @@ def _add_wave_speed_guides(
         return
 
     guide_y = np.linspace(y_min + 0.06 * y_span, y_min + 0.40 * y_span, 100)
-    for key, start_fraction, color, line_style in (
-        ("c_r", 0.88, "white", (0, (5, 2))),
-        ("c_s", 0.80, "#ffb000", (0, (2, 1.5))),
+    for key, speed_fraction, start_fraction, label, color, line_style in (
+        ("c_s", 1.0, 0.89, r"$C_S$", "#ffb000", (0, (2, 1.5))),
+        ("c_r", 1.0, 0.81, r"$C_R$", "white", (0, (5, 2))),
+        ("c_r", 0.8, 0.73, r"$0.8C_R$", "#56b4e9", (0, (4, 1.5))),
+        ("c_r", 0.5, 0.65, r"$0.5C_R$", "#e78ac3", (0, (1, 1.5))),
     ):
-        speed = float(wave_speeds[key])
+        speed = speed_fraction * float(wave_speeds[key])
         guide_time = (
             time_min
             + start_fraction * time_span
             + (guide_y - guide_y[0]) / speed
         )
-        label = rf"$C_{{{'R' if key == 'c_r' else 'S'}}}$ = {speed / 1e3:.2f} km s$^{{-1}}$"
         axis.plot(
             guide_y,
             guide_time,
@@ -89,7 +90,7 @@ def _add_wave_speed_guides(
         axis.text(
             guide_y[-1] + 0.015 * y_span,
             guide_time[-1],
-            label,
+            rf"{label} = {speed / 1e3:.2f} km s$^{{-1}}$",
             color=color,
             fontsize=7.5,
             va="center",
@@ -329,6 +330,8 @@ def plot_mu_eff_maps(
         "phase_split_output_png": str(phase_split_png_path),
         "mu_color_floor": MU_COLOR_FLOOR,
         "rayleigh_wave_speed_m_per_s": wave_speeds["c_r"],
+        "rayleigh_80_percent_speed_m_per_s": 0.8 * wave_speeds["c_r"],
+        "rayleigh_50_percent_speed_m_per_s": 0.5 * wave_speeds["c_r"],
         "shear_wave_speed_m_per_s": wave_speeds["c_s"],
         "mu_min_normal_end": normal_end_min,
         "mu_min_final": final_min,
