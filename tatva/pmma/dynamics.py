@@ -3083,8 +3083,12 @@ def run_simulation_dumped(
             scheduled_shear_traction,
         )
         force_ext = normal_scale * force_normal + shear_traction * force_shear_unit
+        net_force = force_ext - elastic_force - contact_force
+        unconstrained_shear_force = jnp.sum(
+            net_force[prescribed_shear_dofs]
+        )
         accel = zero_constrained_dofs(
-            (force_ext - elastic_force - contact_force) / mass_flat,
+            net_force / mass_flat,
             zero_dofs,
             prescribed_dofs,
         )
@@ -3094,6 +3098,8 @@ def run_simulation_dumped(
             **contact_diag,
             "applied_shear": shear_traction,
             "loading_face_displacement": loading_face_displacement,
+            "unconstrained_shear_force": unconstrained_shear_force,
+            "shear_boundary_reaction": jnp.array(0.0, dtype=dtype),
         }
         diag["plastic_slip"] = plastic_new
         diag["cum_slip"] = cum_new
@@ -3122,6 +3128,7 @@ def run_simulation_dumped(
                 applied_shear_displacement,
                 loading_stopped.astype(dtype),
                 diag["loading_face_displacement"],
+                diag["shear_boundary_reaction"],
             ],
             dtype=dtype,
         )
@@ -3316,6 +3323,14 @@ def run_simulation_dumped(
                 jnp.sum(interface_weights * corrected_coefficient)
                 / total_interface_length
             )
+        diag["shear_boundary_reaction"] = (
+            jnp.sum(
+                mass_flat[prescribed_shear_dofs]
+                * (v_half_new[prescribed_shear_dofs] - v_half[prescribed_shear_dofs])
+                / dt
+            )
+            - diag["unconstrained_shear_force"]
+        )
         kinetic = 0.5 * jnp.sum(mass_flat * v_half_new**2)
         output = make_row(
             time_now + dt,
@@ -3459,6 +3474,7 @@ def run_simulation_dumped(
         "applied_shear_displacement",
         "shear_loading_stopped",
         "loading_face_displacement",
+        "shear_boundary_reaction",
     ]
 
     data_path.parent.mkdir(parents=True, exist_ok=True)

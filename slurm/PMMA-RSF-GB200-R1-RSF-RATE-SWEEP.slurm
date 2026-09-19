@@ -1,0 +1,75 @@
+#!/bin/bash
+#SBATCH --account=MST113389
+#SBATCH --partition=gb200-r1
+#SBATCH --job-name=PMMA-RSF-RATE
+#SBATCH --output=gb200-rsf-rate-sweep-%j.out
+#SBATCH --error=gb200-rsf-rate-sweep-%j.err
+#SBATCH --nodes=4
+#SBATCH --ntasks=16
+#SBATCH --ntasks-per-node=4
+#SBATCH --cpus-per-task=12
+#SBATCH --gres=gpu:4
+#SBATCH --mem=800G
+#SBATCH --time=16:00:00
+#SBATCH --signal=USR1@1800
+#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-user=b09501028@ntu.edu.tw
+
+set -euo pipefail
+
+ROOT=/work/gauss112/tatva
+ENV_PREFIX=/work/gauss112/.venvs/tatva-gb200
+PYTHON=$ENV_PREFIX/bin/python
+RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-54000}
+MIN_FREE_BYTES=${MIN_FREE_BYTES:-25000000000}
+
+[[ -x "$PYTHON" ]] || { echo "Missing Python: $PYTHON" >&2; exit 1; }
+export PATH="$ENV_PREFIX/bin:$PATH"
+export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
+unset LD_LIBRARY_PATH || true
+cd "$ROOT"
+
+echo "RSF-rate sweep job ${SLURM_JOB_ID:-interactive} started at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "Nodes: ${SLURM_JOB_NODELIST:-unset}; tasks: ${SLURM_NTASKS:-unset}"
+
+"$PYTHON" scripts/generate_ts0278_rsf_rate_sweep_cases.py --check
+"$PYTHON" - <<'PY'
+import shutil
+from pathlib import Path
+
+from scripts.generate_ts0278_rsf_rate_sweep_cases import CASE_COUNT, case_path
+from tatva.pmma.config import load_case_config
+from tatva.pmma.runner import preflight
+
+root = Path('/work/gauss112/tatva')
+paths = [case_path(index) for index in range(1, CASE_COUNT + 2)]
+configs = [load_case_config(path) for path in paths]
+estimates = [preflight(config) for config in configs]
+if not all(estimate['within_dump_limit'] for estimate in estimates):
+    raise SystemExit('At least one case exceeds its per-run dump limit.')
+total = sum(int(estimate['estimated_dump_bytes']) for estimate in estimates)
+if total > 1_400_000_000_000:
+    raise SystemExit(f'Estimated sweep dump {total / 1e12:.3f} TB exceeds 1.4 TB.')
+free = shutil.disk_usage(root).free
+required = total + 25_000_000_000
+print(f'RSF-rate storage gate: estimate={total / 1e12:.3f} TB, '
+      f'free={free / 1e12:.3f} TB, required={required / 1e12:.3f} TB')
+if free < required:
+    raise SystemExit('Insufficient free space for the 17-run sweep.')
+PY
+
+export ROOT ENV_PREFIX RUN_TIME_LIMIT_SECONDS MIN_FREE_BYTES
+set +e
+srun --exact --mpi=none --kill-on-bad-exit=0 --wait=0 \
+  --nodes=4 --ntasks=16 --ntasks-per-node=4 --cpus-per-task=12 \
+  --gpus-per-task=1 --gpu-bind=single:1 \
+  bash -c '
+    export SWEEP_INDEX=$((SLURM_PROCID + 1))
+    exec bash "$ROOT/scripts/run_gb200_ts0278_rsf_rate_sweep_rank.sh"
+  '
+sweep_status=$?
+set -e
+
+"$PYTHON" scripts/summarize_rsf_rate_sweep.py
+echo "RSF-rate sweep ended at $(date -u +%Y-%m-%dT%H:%M:%SZ); srun status=$sweep_status"
+exit "$sweep_status"

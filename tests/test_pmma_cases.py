@@ -1666,6 +1666,15 @@ def test_regularized_dump_separates_bulk_and_interface_frames(tmp_path):
         assert h5["interface_high_rate/history"].shape[0] == 10
         assert h5["interface/rsf_direct_effect_profile"].shape == (6,)
         assert h5.attrs["friction_law"] == "rate-state-regularized"
+        columns = [value.decode() for value in h5["history_columns"][:]]
+        reaction = h5["interface_high_rate/history"][:, columns.index("shear_boundary_reaction")]
+        assert np.all(np.isfinite(reaction))
+        assert np.any(np.abs(reaction) > 0.0)
+        displacement = h5["interface_high_rate/history"][:, columns.index("applied_shear_displacement")]
+        shear_work = np.sum(
+            0.5 * (reaction[1:] + reaction[:-1]) * np.diff(displacement)
+        )
+        assert shear_work > 0.0
     assert result["summary"]["saved_frames"] == 5
     assert result["summary"]["interface_shear_frames_saved"] == 6
     assert result["summary"]["quasistatic_handoff"] is None
