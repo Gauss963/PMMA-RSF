@@ -34,6 +34,7 @@ echo "Nodes: ${SLURM_JOB_NODELIST:-unset}; tasks: ${SLURM_NTASKS:-unset}"
 
 "$PYTHON" scripts/generate_ts0278_rsf_rate_sweep_cases.py --check
 "$PYTHON" - <<'PY'
+import json
 import shutil
 from pathlib import Path
 
@@ -42,7 +43,7 @@ from tatva.pmma.config import load_case_config
 from tatva.pmma.runner import preflight
 
 root = Path('/work/gauss112/tatva')
-paths = [case_path(index) for index in range(1, CASE_COUNT + 2)]
+paths = [case_path(index) for index in range(1, CASE_COUNT + 1)]
 configs = [load_case_config(path) for path in paths]
 estimates = [preflight(config) for config in configs]
 if not all(estimate['within_dump_limit'] for estimate in estimates):
@@ -50,12 +51,31 @@ if not all(estimate['within_dump_limit'] for estimate in estimates):
 total = sum(int(estimate['estimated_dump_bytes']) for estimate in estimates)
 if total > 1_400_000_000_000:
     raise SystemExit(f'Estimated sweep dump {total / 1e12:.3f} TB exceeds 1.4 TB.')
+remaining = 0
+for path, estimate in zip(paths, estimates):
+    run_dir = root / 'runs' / f'TS{int(path.stem.split("_")[1]):04d}'
+    status_path = run_dir / 'status.json'
+    status = json.loads(status_path.read_text())['status'] if status_path.exists() else None
+    if status == 'complete':
+        continue
+    dump = run_dir / 'data' / 'simulation.h5'
+    checkpoint = run_dir / 'checkpoint.npz'
+    if status in ('failed', 'checkpointed'):
+        if not (dump.is_file() and checkpoint.is_file()):
+            raise SystemExit(f'{run_dir} cannot resume without both dump and checkpoint.')
+        existing = dump.stat().st_size
+    elif status is None:
+        existing = 0
+    else:
+        raise SystemExit(f'Unsafe existing status {status!r} for {run_dir}.')
+    remaining += max(int(estimate['estimated_dump_bytes']) - existing, 0)
 free = shutil.disk_usage(root).free
-required = total + 25_000_000_000
-print(f'RSF-rate storage gate: estimate={total / 1e12:.3f} TB, '
+required = remaining + 25_000_000_000
+print(f'RSF-rate storage gate: total={total / 1e12:.3f} TB, '
+      f'remaining={remaining / 1e12:.3f} TB, '
       f'free={free / 1e12:.3f} TB, required={required / 1e12:.3f} TB')
 if free < required:
-    raise SystemExit('Insufficient free space for the 17-run sweep.')
+    raise SystemExit('Insufficient free space for remaining sweep output.')
 PY
 
 export ROOT ENV_PREFIX RUN_TIME_LIMIT_SECONDS MIN_FREE_BYTES

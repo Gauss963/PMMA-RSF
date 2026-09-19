@@ -1,4 +1,4 @@
-# TS0304-TS0320: RSF velocity calibration and loading-rate sweep
+# TS0304-TS0319: RSF velocity calibration and loading-rate sweep
 
 TS0278 is the sole template. Geometry, material, 16 MPa normal loading, 2.45 mm
 final shear displacement, middle/loading VW law, leading VS law, mesh and 10 ns
@@ -28,14 +28,14 @@ Each shear phase lasts at least 75 ms and at least 30 ms beyond the nominal
 ramp endpoint. The full-fault loading stop remains TS0278's one-`D_c`
 coverage trigger.
 
-TS0320 repeats TS0309's parameters but freezes loading at the first
+The separate TS0320 control repeats TS0309's parameters but freezes loading at the first
 `|V| >= 500 mm/s` in the loading-end 5-25 mm band. Its practically zero slip
 threshold is intentional: normal loading already produces several `D_c` of
 cumulative slip, so an absolute-slip trigger would not represent new nucleation.
-No RSF state or cumulative slip is reset.
+No RSF state or cumulative slip is reset. It is not part of the 16-run sweep job.
 
 Each run stores 4400 bulk shear frames and 50000 interface shear frames. The
-17-run combined estimated dump is about 1.26 TB and is gated below 1.4 TB
+16-run combined estimated dump is about 1.18 TB and is gated below 1.4 TB
 before Slurm launches the tasks. There is no animation on GB200.
 
 ## Diagnostics
@@ -47,7 +47,7 @@ event. The work is the trapezoidal integral of boundary reaction against the
 prescribed displacement, in the model's energy units per unit out-of-plane
 thickness. It is not inferred from the elastic-energy curve.
 
-After the job, `runs/TS0304_TS0320_rsf_rate_sweep_summary.csv` gathers the
+After the job, `runs/TS0304_TS0319_rsf_rate_sweep_summary.csv` gathers the
 available per-run metrics and marks any missing analysis without discarding
 completed simulation dumps.
 

@@ -19,7 +19,7 @@ export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONUNBUFFERED=1
 export JAX_ENABLE_X64=0
 export JAX_PLATFORMS=cuda
-export XLA_PYTHON_CLIENT_MEM_FRACTION=0.90
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.80
 export XLA_FLAGS=--xla_gpu_enable_command_buffer=
 export OMP_NUM_THREADS=${SLURM_CPUS_PER_TASK:-12}
 export OPENBLAS_NUM_THREADS=$OMP_NUM_THREADS
@@ -92,6 +92,15 @@ run_one() {
         [[ -f "$run_dir/checkpoint.npz" ]] || { echo "Missing $run_id checkpoint." >&2; return 1; }
         resume_args=(--resume)
         ;;
+      failed)
+        [[ -f "$run_dir/checkpoint.npz" && -f "$run_dir/data/simulation.h5" ]] || {
+          echo "Cannot resume $run_id without its checkpoint and dump." >&2
+          return 1
+        }
+        echo "$run_id failed previously; resuming from its last valid checkpoint."
+        rm -f "$run_dir/traceback.txt"
+        resume_args=(--resume)
+        ;;
       *) echo "Unsafe existing status $run_status for $run_id; refusing overwrite." >&2; return 1 ;;
     esac
   fi
@@ -146,8 +155,3 @@ run_one() {
 run_number=$((303 + SWEEP_INDEX))
 printf -v case_name 'rsf_%04d_rsf_rate_%02d.toml' "$run_number" "$SWEEP_INDEX"
 run_one "$run_number" "$case_name"
-
-# The anchor-rate rank runs the otherwise identical early-stop control serially.
-if (( SWEEP_INDEX == 6 )); then
-  run_one 320 rsf_0320_nucleation_stop.toml
-fi

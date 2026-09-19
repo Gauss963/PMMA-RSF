@@ -9,12 +9,12 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUTPUT = ROOT / "runs/TS0304_TS0320_rsf_rate_sweep_summary.csv"
+OUTPUT = ROOT / "runs/TS0304_TS0319_rsf_rate_sweep_summary.csv"
 
 
 def main() -> int:
     rows = []
-    for number in range(304, 321):
+    for number in range(304, 320):
         run_id = f"TS{number:04d}"
         path = ROOT / "runs" / run_id / "stats/rsf_rate_sweep_metrics.json"
         if not path.is_file():

@@ -193,7 +193,7 @@ def test_gb200_shear_rate_sweep_uses_independent_single_gpu_tasks():
     assert "refusing automatic HDF5 resume" in rank_runner
 
 
-def test_gb200_rsf_rate_sweep_runs_single_gpu_cases_and_serial_control():
+def test_gb200_rsf_rate_sweep_runs_sixteen_single_gpu_cases():
     content = (
         ROOT / "slurm/PMMA-RSF-GB200-R1-RSF-RATE-SWEEP.slurm"
     ).read_text(encoding="utf-8")
@@ -210,9 +210,14 @@ def test_gb200_rsf_rate_sweep_runs_single_gpu_cases_and_serial_control():
     assert "1_400_000_000_000" in content
     assert "SWEEP_INDEX=$((SLURM_PROCID + 1))" in content
     assert "run_number=$((303 + SWEEP_INDEX))" in rank_runner
-    assert "SWEEP_INDEX == 6" in rank_runner
-    assert "run_one 320 rsf_0320_nucleation_stop.toml" in rank_runner
+    assert "range(1, CASE_COUNT + 1)" in content
+    assert "run_one 320" not in rank_runner
     assert "analyze_rsf_rate_sweep.py" in rank_runner
+    assert "XLA_PYTHON_CLIENT_MEM_FRACTION=0.80" in rank_runner
+    assert "failed)" in rank_runner
+    assert "resuming from its last valid checkpoint" in rank_runner
+    assert "remaining + 25_000_000_000" in content
+    assert "if status == 'complete':" in content
     assert "render_stress_frames.py" not in rank_runner
     assert "mpi4py" not in rank_runner
 

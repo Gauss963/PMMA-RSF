@@ -55,7 +55,7 @@ def test_rate_sweep_preserves_czm_energy_and_baseline_geometry():
 
     ramps = []
     total_estimated_dump_bytes = 0
-    for index in range(1, CASE_COUNT + 2):
+    for index in range(1, CASE_COUNT + 1):
         path = case_path(index)
         assert path.read_text(encoding="utf-8") == render_case(template, index)
         config = load_case_config(path)
@@ -77,26 +77,26 @@ def test_rate_sweep_preserves_czm_energy_and_baseline_geometry():
         )
         assert estimated_dump_bytes < 100_000_000_000
         total_estimated_dump_bytes += estimated_dump_bytes
-        if index <= CASE_COUNT:
-            ramps.append(config.loading.shear_ramp_time)
-            assert config.loading.stop_min_y == baseline.loading.stop_min_y
-            assert config.loading.stop_max_y == baseline.loading.stop_max_y
-            assert config.loading.stop_slip == pytest.approx(new_dc)
-        else:
-            anchor = load_case_config(case_path(BASELINE_INDEX))
-            payload = asdict(config.loading)
-            anchor_payload = asdict(anchor.loading)
-            for key in ("stop_slip", "stop_min_y", "stop_max_y", "stop_coverage_fraction"):
-                payload.pop(key)
-                anchor_payload.pop(key)
-            assert payload == anchor_payload
-            assert config.loading.stop_slip == pytest.approx(1.0e-12)
-            assert config.loading.stop_min_y == 5.0
-            assert config.loading.stop_max_y == 25.0
-            assert config.loading.stop_coverage_fraction is None
+        ramps.append(config.loading.shear_ramp_time)
+        assert config.loading.stop_min_y == baseline.loading.stop_min_y
+        assert config.loading.stop_max_y == baseline.loading.stop_max_y
+        assert config.loading.stop_slip == pytest.approx(new_dc)
     assert ramps == sorted(ramps, reverse=True)
     assert ramp_time(BASELINE_INDEX) == pytest.approx(0.075)
     assert total_estimated_dump_bytes < 1_400_000_000_000
+
+    control = load_case_config(case_path(CASE_COUNT + 1))
+    anchor = load_case_config(case_path(BASELINE_INDEX))
+    payload = asdict(control.loading)
+    anchor_payload = asdict(anchor.loading)
+    for key in ("stop_slip", "stop_min_y", "stop_max_y", "stop_coverage_fraction"):
+        payload.pop(key)
+        anchor_payload.pop(key)
+    assert payload == anchor_payload
+    assert control.loading.stop_slip == pytest.approx(1.0e-12)
+    assert control.loading.stop_min_y == 5.0
+    assert control.loading.stop_max_y == 25.0
+    assert control.loading.stop_coverage_fraction is None
 
 
 def test_front_fit_and_crossing_interpolation():

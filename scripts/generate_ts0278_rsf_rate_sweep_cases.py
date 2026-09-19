@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate a fixed-fracture-energy RSF loading-rate sweep and stop control."""
+"""Generate the 16 fixed-fracture-energy RSF loading-rate sweep cases."""
 
 from __future__ import annotations
 
@@ -155,7 +155,7 @@ def main() -> int:
     args = parser.parse_args()
     template = TEMPLATE.read_text(encoding="utf-8")
     stale: list[Path] = []
-    for index in range(1, CASE_COUNT + 2):
+    for index in range(1, CASE_COUNT + 1):
         path = case_path(index)
         expected = render_case(template, index)
         if args.check:
