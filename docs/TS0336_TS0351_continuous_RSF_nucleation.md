@@ -94,3 +94,7 @@ python scripts/generate_ts0336_nucleation_sweep_cases.py --check
 PREFLIGHT_ONLY=1 bash slurm/PMMA-RSF-GB200-R1-NUCLEATION-SWEEP.slurm
 sbatch slurm/PMMA-RSF-GB200-R1-NUCLEATION-SWEEP.slurm
 ```
+
+On an x86 login node, run the optional preflight with the x86 environment:
+`PREFLIGHT_ONLY=1 ENV_PREFIX=/home/gauss112/.conda/envs/tatva bash slurm/PMMA-RSF-GB200-R1-NUCLEATION-SWEEP.slurm`.
+Submit normally without that override; the scheduled GB200 tasks use the ARM environment.

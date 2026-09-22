@@ -16,7 +16,7 @@
 set -euo pipefail
 
 ROOT=/work/gauss112/tatva
-ENV_PREFIX=/work/gauss112/.venvs/tatva-gb200
+ENV_PREFIX=${ENV_PREFIX:-/work/gauss112/.venvs/tatva-gb200}
 PYTHON=$ENV_PREFIX/bin/python
 RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-54000}
 MIN_FREE_BYTES=${MIN_FREE_BYTES:-25000000000}
