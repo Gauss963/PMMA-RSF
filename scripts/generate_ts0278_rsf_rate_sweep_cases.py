@@ -13,7 +13,6 @@ ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "cases/rsf_0278_czm_xc_07.toml"
 FIRST_RUN = 304
 CASE_COUNT = 16
-CONTROL_RUN = FIRST_RUN + CASE_COUNT
 BASELINE_INDEX = 6
 BASE_RAMP_TIME_S = 0.075
 SLOW_RAMP_TIME_S = 0.150
@@ -63,19 +62,18 @@ def ramp_time(index: int) -> float:
 
 
 def case_path(index: int) -> Path:
-    if index == CASE_COUNT + 1:
-        return ROOT / "cases" / f"rsf_{CONTROL_RUN:04d}_nucleation_stop.toml"
+    if not 1 <= index <= CASE_COUNT:
+        raise ValueError(f"Sweep index must be 1 through {CASE_COUNT}.")
     return ROOT / "cases" / f"rsf_{FIRST_RUN + index - 1:04d}_rsf_rate_{index:02d}.toml"
 
 
 def render_case(template: str, index: int) -> str:
     parsed = tomllib.loads(template)
     new_b, new_dc = calibrated_parameters(parsed)
-    control = index == CASE_COUNT + 1
-    time_s = BASE_RAMP_TIME_S if control else ramp_time(index)
+    time_s = ramp_time(index)
     shear_time_s = max(BASE_RAMP_TIME_S, time_s + POST_RAMP_TIME_S)
-    run_number = CONTROL_RUN if control else FIRST_RUN + index - 1
-    suffix = "nucleation-stop" if control else f"rsf-rate-{index:02d}of16"
+    run_number = FIRST_RUN + index - 1
+    suffix = f"rsf-rate-{index:02d}of16"
     peak_speed = math.pi * 2.45 / (2.0 * time_s)
 
     text = replace_count(
@@ -123,29 +121,6 @@ def render_case(template: str, index: int) -> str:
         "# Prescribed CZM anchor X_c = 4.8 mm; stop at one local D_c.",
         "# Preserve the TS0278 CZM energy; stop at the recalibrated local D_c.",
     )
-    if control:
-        text = replace_count(
-            text,
-            "# Preserve the TS0278 CZM energy; stop at the recalibrated local D_c.",
-            "# The dynamic stop ignores pre-slip accumulated during normal loading.",
-        )
-        text = replace_count(
-            text,
-            f"stop_slip = {new_dc:.17g}",
-            "stop_slip = 1.0e-12",
-        )
-        text = replace_count(text, "stop_min_y = 0.5", "stop_min_y = 5.0")
-        text = replace_count(text, "stop_max_y = 499.0", "stop_max_y = 25.0")
-        text = replace_count(
-            text,
-            "# Require rupture through the full, unchamfered active contact.",
-            "# Freeze at the first 500 mm/s event in the loading-end nucleus.",
-        )
-        text = replace_count(
-            text,
-            "stop_coverage_fraction = 1.0",
-            "# No slip-coverage test: normal loading already accumulated several D_c.",
-        )
     return text
 
 

@@ -46,10 +46,12 @@ class LoadingConfig:
     stop_coverage_fraction: float | None
     lock_shear_edge_during_normal: bool
     relax_tangential_contact_during_normal: bool
+    prestress_shear_displacement: float | None
     quasistatic_shear_fraction: float
     quasistatic_shear_start_time: float
     quasistatic_shear_ramp_time: float
     normal_relaxation_time: float | None
+    normal_relaxation_start_time: float
     quasistatic_damping_time: float | None
 
     @property
@@ -100,6 +102,8 @@ class RSFConfig:
     reference_velocity: float
     reference_state: float
     initial_steady_velocity: float
+    initial_state_mode: str
+    target_normalized_prestress: float | None
     dynamic_calibration_velocity: float
     target_middle_dynamic_friction: float
     loading_length: float
@@ -240,6 +244,11 @@ def load_case_config(path: str | Path) -> PMMACaseConfig:
             relax_tangential_contact_during_normal=bool(
                 loading.get("relax_tangential_contact_during_normal", False)
             ),
+            prestress_shear_displacement=(
+                None
+                if "prestress_shear_displacement" not in loading
+                else float(loading["prestress_shear_displacement"])
+            ),
             quasistatic_shear_fraction=float(
                 loading.get("quasistatic_shear_fraction", 0.0)
             ),
@@ -253,6 +262,9 @@ def load_case_config(path: str | Path) -> PMMACaseConfig:
                 None
                 if "normal_relaxation_time" not in loading
                 else float(loading["normal_relaxation_time"])
+            ),
+            normal_relaxation_start_time=float(
+                loading.get("normal_relaxation_start_time", 0.0)
             ),
             quasistatic_damping_time=(
                 None
@@ -310,6 +322,14 @@ def load_case_config(path: str | Path) -> PMMACaseConfig:
             reference_velocity=float(rsf["reference_velocity"]),
             reference_state=float(rsf["reference_state"]),
             initial_steady_velocity=float(rsf["initial_steady_velocity"]),
+            initial_state_mode=str(
+                rsf.get("initial_state_mode", "steady-state")
+            ).strip().lower(),
+            target_normalized_prestress=(
+                None
+                if "target_normalized_prestress" not in rsf
+                else float(rsf["target_normalized_prestress"])
+            ),
             dynamic_calibration_velocity=float(rsf["dynamic_calibration_velocity"]),
             target_middle_dynamic_friction=float(
                 rsf["target_middle_dynamic_friction"]
@@ -449,6 +469,20 @@ def _validate(config: PMMACaseConfig) -> None:
         raise ValueError("loading.stop_coverage_fraction must be in (0, 1].")
     if not 0.0 <= config.loading.quasistatic_shear_fraction < 1.0:
         raise ValueError("quasistatic_shear_fraction must be in [0, 1).")
+    prestress_displacement = config.loading.prestress_shear_displacement
+    if prestress_displacement is not None:
+        if config.loading.quasistatic_shear_fraction != 0.0:
+            raise ValueError(
+                "prestress_shear_displacement and quasistatic_shear_fraction "
+                "cannot both be enabled."
+            )
+        lower = config.loading.shear_displacement_initial
+        upper = config.loading.shear_displacement_final
+        if not lower <= prestress_displacement < upper:
+            raise ValueError(
+                "prestress_shear_displacement must be in "
+                "[shear_displacement_initial, shear_displacement_final)."
+            )
     relaxation_time = config.loading.effective_normal_relaxation_time
     if (
         config.loading.normal_relaxation_time is not None
@@ -466,7 +500,21 @@ def _validate(config: PMMACaseConfig) -> None:
         )
     if relaxation_time is not None and relaxation_time <= 0.0:
         raise ValueError("normal_relaxation_time must be positive when enabled.")
-    if config.loading.quasistatic_shear_fraction > 0.0:
+    if not 0.0 <= config.loading.normal_relaxation_start_time < (
+        config.loading.normal_phase_time
+    ):
+        raise ValueError(
+            "normal_relaxation_start_time must be in [0, normal_phase_time)."
+        )
+    prestress_enabled = (
+        config.loading.quasistatic_shear_fraction > 0.0
+        or (
+            prestress_displacement is not None
+            and prestress_displacement
+            > config.loading.shear_displacement_initial
+        )
+    )
+    if prestress_enabled:
         if config.loading.quasistatic_shear_start_time < 0.0:
             raise ValueError("quasistatic_shear_start_time cannot be negative.")
         if config.loading.quasistatic_shear_ramp_time <= 0.0:
@@ -505,5 +553,49 @@ def _validate(config: PMMACaseConfig) -> None:
         raise ValueError("RSF end zones and transitions leave no middle fault segment.")
     if config.rsf.initial_steady_velocity <= 0.0:
         raise ValueError("rsf.initial_steady_velocity must be positive.")
+    if config.rsf.initial_state_mode not in {
+        "steady-state",
+        "traction-consistent-handoff",
+    }:
+        raise ValueError(
+            "rsf.initial_state_mode must be 'steady-state' or "
+            "'traction-consistent-handoff'."
+        )
+    if config.rsf.initial_state_mode == "traction-consistent-handoff":
+        if relaxation_time is None:
+            raise ValueError(
+                "traction-consistent-handoff requires normal_relaxation_time."
+            )
+        if config.loading.relax_tangential_contact_during_normal:
+            raise ValueError(
+                "traction-consistent-handoff requires tangential contact during "
+                "initial-condition construction."
+            )
+        if min(
+            config.rsf.loading.state_effect,
+            config.rsf.middle.state_effect,
+            config.rsf.leading.state_effect,
+        ) <= 0.0:
+            raise ValueError(
+                "traction-consistent-handoff requires b > 0 in every RSF zone."
+            )
+    elif prestress_displacement is not None:
+        raise ValueError(
+            "prestress_shear_displacement requires "
+            "rsf.initial_state_mode='traction-consistent-handoff'."
+        )
+    if (
+        config.rsf.target_normalized_prestress is not None
+        and not 0.0 < config.rsf.target_normalized_prestress < 1.0
+    ):
+        raise ValueError("rsf.target_normalized_prestress must be in (0, 1).")
+    if (
+        config.rsf.target_normalized_prestress is not None
+        and config.rsf.initial_state_mode != "traction-consistent-handoff"
+    ):
+        raise ValueError(
+            "rsf.target_normalized_prestress requires "
+            "traction-consistent-handoff."
+        )
     if config.rsf.reference_velocity <= 0.0 or config.rsf.reference_state <= 0.0:
         raise ValueError("RSF reference velocity and state must be positive.")

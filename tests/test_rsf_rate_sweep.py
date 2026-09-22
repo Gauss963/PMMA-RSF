@@ -85,18 +85,8 @@ def test_rate_sweep_preserves_czm_energy_and_baseline_geometry():
     assert ramp_time(BASELINE_INDEX) == pytest.approx(0.075)
     assert total_estimated_dump_bytes < 1_400_000_000_000
 
-    control = load_case_config(case_path(CASE_COUNT + 1))
-    anchor = load_case_config(case_path(BASELINE_INDEX))
-    payload = asdict(control.loading)
-    anchor_payload = asdict(anchor.loading)
-    for key in ("stop_slip", "stop_min_y", "stop_max_y", "stop_coverage_fraction"):
-        payload.pop(key)
-        anchor_payload.pop(key)
-    assert payload == anchor_payload
-    assert control.loading.stop_slip == pytest.approx(1.0e-12)
-    assert control.loading.stop_min_y == 5.0
-    assert control.loading.stop_max_y == 25.0
-    assert control.loading.stop_coverage_fraction is None
+    with pytest.raises(ValueError, match="1 through 16"):
+        case_path(CASE_COUNT + 1)
 
 
 def test_front_fit_and_crossing_interpolation():

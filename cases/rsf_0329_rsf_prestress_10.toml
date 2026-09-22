@@ -1,11 +1,11 @@
 [case]
-name = "pmma-rsf-0320-nucleation-stop"
+name = "pmma-rsf-0329-prestress-10of16"
 run_root = "runs"
 
 [geometry.moving]
 origin = [0.0, 0.0]
 dimensions = [200.0, 500.0]
-# Normal-stress sweep uses the full rectangular moving block.
+# Retain the TS0319 full rectangular moving block.
 leading_chamfer_along_fault = 0.0
 leading_chamfer_perpendicular = 0.0
 
@@ -25,23 +25,29 @@ normal_stress_reference = 16.0
 normal_displacement = 0.691620986687549
 normal_phase_time = 0.040
 normal_ramp_time = 0.020
+# Damping is enabled only for the static initial-condition construction.
+normal_relaxation_time = 0.0002
+normal_relaxation_start_time = 0.02
 shear_displacement_initial = 0.0
-shear_displacement_final = 2.45
+shear_displacement_final = 4.306509539260424
+# Build a static traction field while RSF is inactive, then invert the
+# regularized law so theta supports that traction at V_init.
+prestress_shear_displacement = 1.8565095392604236
 quasistatic_shear_fraction = 0.0
-quasistatic_shear_start_time = 0.0
-quasistatic_shear_ramp_time = 0.0
-shear_phase_time = 0.105
-# Fixed 2.45 mm half-cosine ramp; peak speed 51.3127 mm/s.
-shear_ramp_time = 0.074999999999999997
+quasistatic_shear_start_time = 0.02
+quasistatic_shear_ramp_time = 0.01
+shear_phase_time = 0.074999999999999997
+# Add the same 2.45 mm half-cosine increment; peak speed 200 mm/s.
+shear_ramp_time = 0.01924225500323749
 shear_ramp_shape = "half-cosine"
 stop_on_rupture = true
-# The dynamic stop ignores pre-slip accumulated during normal loading.
+# Freeze on the first dynamic loading-end event in this shear phase.
 stop_slip = 1.0e-12
 stop_velocity = 500.0
 stop_min_y = 5.0
-# Freeze at the first 500 mm/s event in the loading-end nucleus.
+# Monitor only the loading-end nucleus.
 stop_max_y = 25.0
-# No slip-coverage test: normal loading already accumulated several D_c.
+# A single station at 500 mm/s is sufficient; no coverage criterion.
 lock_shear_edge_during_normal = true
 relax_tangential_contact_during_normal = false
 
@@ -71,6 +77,9 @@ initial_friction = 0.8
 reference_velocity = 1.0e-4
 reference_state = 3.3e-4
 initial_steady_velocity = 1.0e-4
+initial_state_mode = "traction-consistent-handoff"
+target_normalized_prestress = 0.67500000000000004
+# Target mean shear traction: 11.7634675 MPa.
 dynamic_calibration_velocity = 200.0
 target_middle_dynamic_friction = 0.45
 loading_length = 30.0
@@ -93,7 +102,7 @@ b = 0.029123527228205267
 dc = 0.00042852936846183833
 
 [rsf.leading]
-# Leading sweep 04/16, VS-to-VN, fraction=0.428571429.
+# Retain the TS0319 leading velocity-strengthening parameters.
 f0 = 0.8
 a = 0.0067142857142857143
 b = 0.0050000000000000001

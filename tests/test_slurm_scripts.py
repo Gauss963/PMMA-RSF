@@ -17,6 +17,7 @@ def test_non_gb200_slurm_scripts_leave_memory_allocation_to_scheduler():
         "PMMA-RSF-GB200-R1-LEADING-EDGE-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-LEADING-TRANSITION-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-LOADING-VN-SWEEP.slurm",
+        "PMMA-RSF-GB200-R1-PRESTRESS-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-RSF-RATE-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-CHAMFER-DEPTH-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-CZM-XC-SWEEP.slurm",
@@ -220,6 +221,35 @@ def test_gb200_rsf_rate_sweep_runs_sixteen_single_gpu_cases():
     assert "if status == 'complete':" in content
     assert "render_stress_frames.py" not in rank_runner
     assert "mpi4py" not in rank_runner
+
+
+def test_gb200_rsf_prestress_sweep_runs_exactly_sixteen_single_gpu_cases():
+    content = (
+        ROOT / "slurm/PMMA-RSF-GB200-R1-PRESTRESS-SWEEP.slurm"
+    ).read_text(encoding="utf-8")
+    rank_runner = (
+        ROOT / "scripts/run_gb200_ts0320_rsf_prestress_sweep_rank.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "#SBATCH --partition=gb200-r1" in content
+    assert "#SBATCH --nodes=4" in content
+    assert "#SBATCH --ntasks=16" in content
+    assert "#SBATCH --ntasks-per-node=4" in content
+    assert "#SBATCH --gres=gpu:4" in content
+    assert "#SBATCH --time=16:00:00" in content
+    assert "--mpi=none" in content
+    assert "--gpus-per-task=1" in content
+    assert "CASE_COUNT != 16" in content
+    assert "range(1, CASE_COUNT + 1)" in content
+    assert "generate_ts0320_rsf_prestress_sweep_cases.py --check" in content
+    assert "1_400_000_000_000" in content
+    assert "SWEEP_INDEX=$((SLURM_PROCID + 1))" in content
+    assert "run_number=$((319 + SWEEP_INDEX))" in rank_runner
+    assert "analyze_rsf_prestress_sweep.py" in rank_runner
+    assert "XLA_PYTHON_CLIENT_MEM_FRACTION=0.80" in rank_runner
+    assert "tatva.pmma.mpi" not in rank_runner
+    assert "mpi4py" not in rank_runner
+    assert "render_stress_frames.py" not in rank_runner
 
 
 def test_gb200_leading_edge_sweep_uses_independent_single_gpu_tasks():

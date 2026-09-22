@@ -145,6 +145,8 @@ def make_run_config(config: PMMACaseConfig) -> RunConfig:
         shear_ramp_time=loading.shear_ramp_time,
         shear_ramp_shape=loading.shear_ramp_shape,
         normal_relaxation_time=loading.effective_normal_relaxation_time,
+        normal_relaxation_start_time=loading.normal_relaxation_start_time,
+        prestress_shear_displacement=loading.prestress_shear_displacement,
         quasistatic_shear_fraction=loading.quasistatic_shear_fraction,
         quasistatic_shear_start_time=loading.quasistatic_shear_start_time,
         quasistatic_shear_ramp_time=loading.quasistatic_shear_ramp_time,
@@ -167,6 +169,9 @@ def make_run_config(config: PMMACaseConfig) -> RunConfig:
         rsf_characteristic_slip=rsf.middle.characteristic_slip,
         rsf_initial_state=rsf.middle.characteristic_slip
         / rsf.initial_steady_velocity,
+        rsf_initial_state_mode=rsf.initial_state_mode,
+        rsf_initialization_velocity=rsf.initial_steady_velocity,
+        rsf_target_normalized_prestress=rsf.target_normalized_prestress,
         rsf_profile_spec=rate_state_profile_spec(config),
         normal_stress_override=loading.normal_stress_reference,
         dimension=2,

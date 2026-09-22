@@ -17,6 +17,7 @@ from tatva import Mesh, Operator
 from tatva.element import Line2, Quad4, Tetrahedron4, Tri3
 from tatva.friction import (
     project_regularized_rate_state_velocity,
+    regularized_rate_state_initial_state,
     regularized_rate_state_strength,
     update_ageing_state,
     velocity_weakening_strengthening_coefficient,
@@ -109,6 +110,8 @@ class RunConfig:
     shear_ramp_time: float | None = None
     shear_ramp_shape: str = "linear"
     normal_relaxation_time: float | None = None
+    normal_relaxation_start_time: float = 0.0
+    prestress_shear_displacement: float | None = None
     quasistatic_shear_fraction: float = 0.0
     quasistatic_shear_start_time: float = 0.0
     quasistatic_shear_ramp_time: float = 0.0
@@ -141,6 +144,9 @@ class RunConfig:
     rsf_reference_state: float = 3.3e-4
     rsf_characteristic_slip: float = 5.0e-4
     rsf_initial_state: float | None = None
+    rsf_initial_state_mode: str = "steady-state"
+    rsf_initialization_velocity: float = 1.0e-4
+    rsf_target_normalized_prestress: float | None = None
     rsf_profile_spec: dict[str, Any] | None = None
     leading_edge_creep_length: float = 0.0
     leading_edge_creep_transition_length: float = 0.0
@@ -1174,6 +1180,37 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
             "'rate-state-regularized', "
             f"got {config.friction_law!r}."
         )
+    rsf_initial_state_mode = str(config.rsf_initial_state_mode).strip().lower()
+    if rsf_initial_state_mode not in {
+        "steady-state",
+        "traction-consistent-handoff",
+    }:
+        raise ValueError(
+            "rsf_initial_state_mode must be 'steady-state' or "
+            "'traction-consistent-handoff'."
+        )
+    if config.rsf_initialization_velocity <= 0.0:
+        raise ValueError("rsf_initialization_velocity must be positive.")
+    if (
+        config.rsf_target_normalized_prestress is not None
+        and not 0.0 < config.rsf_target_normalized_prestress < 1.0
+    ):
+        raise ValueError("rsf_target_normalized_prestress must be in (0, 1).")
+    if (
+        config.rsf_target_normalized_prestress is not None
+        and rsf_initial_state_mode != "traction-consistent-handoff"
+    ):
+        raise ValueError(
+            "rsf_target_normalized_prestress requires "
+            "traction-consistent-handoff."
+        )
+    if (
+        rsf_initial_state_mode == "traction-consistent-handoff"
+        and friction_law != "rate-state-regularized"
+    ):
+        raise ValueError(
+            "traction-consistent-handoff requires rate-state-regularized friction."
+        )
     rsf_parameters: dict[str, Any] = {
         "reference_friction": float(config.rsf_reference_friction),
         "direct_effect": float(config.rsf_direct_effect),
@@ -1267,6 +1304,14 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
                 raise ValueError("RSF profile field direct_effect must be non-negative.")
             if np.any(np.asarray(rsf_parameters["state_effect"]) < 0.0):
                 raise ValueError("RSF profile field state_effect must be non-negative.")
+        if (
+            rsf_initial_state_mode == "traction-consistent-handoff"
+            and np.any(np.asarray(rsf_parameters["state_effect"]) <= 0.0)
+        ):
+            raise ValueError(
+                "traction-consistent-handoff requires a positive state effect "
+                "at every contact station."
+            )
     interface_plot_master_nodes = select_interface_plot_nodes(moving, master_nodes)
     interface_plot_slave_nodes = select_interface_plot_nodes(stationary, slave_nodes)
     interface_weights = moving.boundary_weights[case.simulation.master_surface][master_nodes]
@@ -1462,6 +1507,7 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         if config.normal_relaxation_time is None
         else float(config.normal_relaxation_time)
     )
+    normal_relaxation_start_time = float(config.normal_relaxation_start_time)
     if (
         normal_relaxation_time is not None
         and quasistatic_damping_time is not None
@@ -1480,8 +1526,55 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         normal_relaxation_time = quasistatic_damping_time
     if normal_relaxation_time is not None and normal_relaxation_time <= 0.0:
         raise ValueError("normal_relaxation_time must be positive when enabled.")
+    if (
+        rsf_initial_state_mode == "traction-consistent-handoff"
+        and normal_relaxation_time is None
+    ):
+        raise ValueError(
+            "traction-consistent-handoff requires normal_relaxation_time."
+        )
+    if (
+        rsf_initial_state_mode == "traction-consistent-handoff"
+        and config.relax_tangential_contact_during_normal
+    ):
+        raise ValueError(
+            "traction-consistent-handoff requires tangential contact during "
+            "initial-condition construction."
+        )
+    if not 0.0 <= normal_relaxation_start_time < pressure_time:
+        raise ValueError(
+            "normal_relaxation_start_time must be in [0, normal_phase_time)."
+        )
     if not 0.0 <= quasistatic_shear_fraction < 1.0:
         raise ValueError("quasistatic_shear_fraction must be in [0, 1).")
+    prestress_shear_displacement = (
+        None
+        if config.prestress_shear_displacement is None
+        else float(config.prestress_shear_displacement)
+    )
+    if (
+        prestress_shear_displacement is not None
+        and quasistatic_shear_fraction > 0.0
+    ):
+        raise ValueError(
+            "prestress_shear_displacement and quasistatic_shear_fraction "
+            "cannot both be enabled."
+        )
+    if prestress_shear_displacement is not None:
+        if rsf_initial_state_mode != "traction-consistent-handoff":
+            raise ValueError(
+                "prestress_shear_displacement requires "
+                "traction-consistent-handoff."
+            )
+        if not shear_displacement_k <= prestress_shear_displacement < shear_displacement_s:
+            raise ValueError(
+                "prestress_shear_displacement must be in "
+                "[shear_displacement_k, shear_displacement_s)."
+            )
+        quasistatic_shear_fraction = (
+            (prestress_shear_displacement - shear_displacement_k)
+            / (shear_displacement_s - shear_displacement_k)
+        )
     if quasistatic_shear_fraction > 0.0:
         if shear_loading_mode != "displacement":
             raise ValueError(
@@ -1669,6 +1762,14 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
             np.arange(1, normal_ramp_steps + 1, dtype=scalar_dtype) / normal_ramp_steps
         )
     normal_schedule_shear = np.ones(shear_steps, dtype=scalar_dtype)
+    normal_relaxation_pressure = np.zeros(pressure_steps, dtype=scalar_dtype)
+    if normal_relaxation_time is not None:
+        relaxation_start_step = min(
+            pressure_steps - 1,
+            max(0, int(math.floor(normal_relaxation_start_time / dt))),
+        )
+        normal_relaxation_pressure[relaxation_start_step:] = 1.0
+    normal_relaxation_shear = np.zeros(shear_steps, dtype=scalar_dtype)
     normal_displacement_pressure = np.zeros(pressure_steps, dtype=scalar_dtype)
     normal_displacement_shear = np.zeros(shear_steps, dtype=scalar_dtype)
     if normal_loading_mode == "displacement":
@@ -1830,6 +1931,9 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         "rsf_initial_state": float(
             np.mean(np.asarray(rsf_parameters["initial_state"]))
         ),
+        "rsf_initial_state_mode": rsf_initial_state_mode,
+        "rsf_initialization_velocity": float(config.rsf_initialization_velocity),
+        "rsf_target_normalized_prestress": config.rsf_target_normalized_prestress,
         "leading_edge_creep_length": float(config.leading_edge_creep_length),
         "leading_edge_creep_transition_length": float(
             config.leading_edge_creep_transition_length
@@ -1856,9 +1960,15 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         "shear_displacement_s": float(shear_displacement_s),
         "quasistatic_shear_fraction": quasistatic_shear_fraction,
         "quasistatic_shear_target": float(quasistatic_shear_target),
+        "prestress_shear_displacement": prestress_shear_displacement,
         "quasistatic_shear_start_time": quasistatic_shear_start_time,
         "quasistatic_shear_ramp_time": quasistatic_shear_ramp_time,
         "normal_relaxation_time": normal_relaxation_time,
+        "normal_relaxation_start_time": normal_relaxation_start_time,
+        "normal_relaxation_pressure": jnp.asarray(
+            normal_relaxation_pressure, dtype=dtype
+        ),
+        "normal_relaxation_shear": jnp.asarray(normal_relaxation_shear, dtype=dtype),
         # Retain the old key for readers of existing summary payloads.
         "quasistatic_damping_time": normal_relaxation_time,
         "pressure_time": float(pressure_time),
@@ -1977,7 +2087,6 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         ),
         dtype=dtype,
     )
-
     n_moving = moving.n_nodes
     n_stationary = stationary.n_nodes
     friction = model["friction"]
@@ -2268,7 +2377,7 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         ) = carry
         normal_scale = loading[0]
         shear_traction = loading[1]
-        loading_stop_reached = _shear_loading_stop_reached(
+        loading_stop_reached_before = _shear_loading_stop_reached(
             cum_slip,
             slip_rate,
             shear_loading_stop_mask,
@@ -2278,17 +2387,19 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
             shear_loading_stop_velocity,
             shear_loading_stop_coverage_fraction,
         )
-        stop_now = (
-            allow_loading_stop and stop_shear_loading and loading_stop_reached
+        stop_before_update = (
+            allow_loading_stop
+            and stop_shear_loading
+            and loading_stop_reached_before
         )
-        loading_stopped_new = loading_stopped | stop_now
+        loading_frozen_before_update = loading_stopped | stop_before_update
         applied_shear_displacement = jnp.where(
-            loading_stopped_new,
+            loading_frozen_before_update,
             previous_shear_displacement,
             loading[4],
         )
         applied_shear_velocity = jnp.where(
-            loading_stopped_new,
+            loading_frozen_before_update,
             jnp.asarray(0.0, dtype=dtype),
             loading[5],
         )
@@ -2333,12 +2444,56 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         )
         velocity_trial = v_half + dt * accel
         if apply_normal_relaxation:
-            velocity_trial = normal_relaxation_factor * velocity_trial
+            relaxation_factor = jnp.where(
+                loading[6] > 0.5,
+                normal_relaxation_factor,
+                jnp.asarray(1.0, dtype=dtype),
+            )
+            velocity_trial = relaxation_factor * velocity_trial
         v_half_new = apply_constraints(
             velocity_trial,
             zero_dofs,
             prescribed_dofs,
             prescribed_velocities,
+        )
+        loading_stop_reached_after = _shear_loading_stop_reached(
+            diag["cum_slip"],
+            diag["slip_rate"],
+            shear_loading_stop_mask,
+            critical_slip_profile,
+            shear_loading_stop_slip,
+            shear_loading_stop_uses_critical_profile,
+            shear_loading_stop_velocity,
+            shear_loading_stop_coverage_fraction,
+        )
+        stop_after_update = (
+            allow_loading_stop
+            and stop_shear_loading
+            and loading_stop_reached_after
+        )
+        loading_stopped_new = (
+            loading_stopped | stop_before_update | stop_after_update
+        )
+        final_shear_velocity = jnp.where(
+            loading_stopped_new,
+            jnp.asarray(0.0, dtype=dtype),
+            applied_shear_velocity,
+        )
+        final_prescribed_velocities = jnp.concatenate(
+            [
+                prescribed_normal_profile * loading[3],
+                jnp.full(
+                    prescribed_shear_dofs.shape,
+                    final_shear_velocity,
+                    dtype=dtype,
+                ),
+            ]
+        )
+        v_half_new = apply_constraints(
+            v_half_new,
+            zero_dofs,
+            prescribed_dofs,
+            final_prescribed_velocities,
         )
         kinetic = 0.5 * jnp.sum(mass_flat * v_half_new**2)
         output = jnp.array(
@@ -2415,6 +2570,7 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
                 model["normal_velocity_pressure"],
                 model["shear_displacement_pressure"],
                 model["shear_velocity_pressure"],
+                model["normal_relaxation_pressure"],
             ],
             axis=1,
         ),
@@ -2433,6 +2589,7 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
                 model["normal_velocity_shear"],
                 model["shear_displacement_shear"],
                 model["shear_velocity_shear"],
+                model["normal_relaxation_shear"],
             ],
             axis=1,
         ),
@@ -2769,6 +2926,10 @@ def run_simulation_dumped(
         ),
         dtype=dtype,
     )
+    construct_rsf_prestress = (
+        use_regularized_rate_state
+        and model["rsf_initial_state_mode"] == "traction-consistent-handoff"
+    )
 
     n_moving = moving.n_nodes
     n_stationary = stationary.n_nodes
@@ -2919,6 +3080,7 @@ def run_simulation_dumped(
         cum_slip: jax.Array,
         rsf_state: jax.Array,
         tangential_friction_active: bool,
+        stick_tangential_contact: bool,
     ) -> tuple[jax.Array, jax.Array, jax.Array, dict[str, jax.Array]]:
         u_moving, u_stationary = split_u(u_flat)
         v_moving, v_stationary = split_u(v_flat)
@@ -2938,7 +3100,17 @@ def run_simulation_dumped(
         friction_velocity = jnp.abs(
             v_moving[master_nodes, 1] - v_stationary[slave_nodes, 1]
         )
-        if use_regularized_rate_state:
+        if use_regularized_rate_state and stick_tangential_contact:
+            new_rsf_state = rsf_state
+            friction_velocity = jnp.zeros_like(friction_velocity)
+            friction_strength = jnp.where(in_contact, jnp.abs(trial_tau), 0.0)
+            mu_eff = jnp.where(
+                normal_traction > 0.0,
+                friction_strength
+                / jnp.maximum(normal_traction, jnp.finfo(dtype).tiny),
+                0.0,
+            )
+        elif use_regularized_rate_state:
             new_rsf_state = rsf_state
             friction_strength = regularized_rate_state_strength(
                 friction_velocity,
@@ -2981,7 +3153,12 @@ def run_simulation_dumped(
         if not use_regularized_rate_state:
             friction_strength = mu_eff * normal_traction
         friction_strength = jnp.where(in_contact, friction_strength, 0.0)
-        if use_regularized_rate_state:
+        if use_regularized_rate_state and stick_tangential_contact:
+            new_plastic = plastic_slip
+            new_cum = cum_slip
+            new_slip_rate = jnp.zeros_like(friction_velocity)
+            tau = jnp.where(in_contact, trial_tau, 0.0)
+        elif use_regularized_rate_state:
             new_plastic = plastic_slip
             new_cum = cum_slip
             new_slip_rate = friction_velocity
@@ -3025,10 +3202,10 @@ def run_simulation_dumped(
         forces = forces.at[stationary_iface_y].add(-interface_weights * tau)
 
         elastic_gap = jnp.where(in_contact, rel_tangent - new_plastic, 0.0)
-        tangential_energy = jnp.where(
-            use_regularized_rate_state,
-            0.0,
-            0.5 * penalty_t * elastic_gap**2,
+        tangential_energy = (
+            0.5 * penalty_t * elastic_gap**2
+            if stick_tangential_contact or not use_regularized_rate_state
+            else jnp.zeros_like(elastic_gap)
         )
         interface_energy = jnp.sum(
             interface_weights
@@ -3063,6 +3240,7 @@ def run_simulation_dumped(
         scheduled_shear_traction: jax.Array,
         actuator_displacement: jax.Array,
         tangential_friction_active: bool,
+        stick_tangential_contact: bool,
         zero_dofs: jax.Array,
         prescribed_dofs: jax.Array,
     ) -> tuple[jax.Array, dict[str, jax.Array]]:
@@ -3074,6 +3252,7 @@ def run_simulation_dumped(
             cum_slip,
             rsf_state,
             tangential_friction_active,
+            stick_tangential_contact,
         )
         loading_face_displacement = jnp.mean(u_flat[moving_shear_loading_dofs])
         shear_traction = jnp.where(
@@ -3150,6 +3329,7 @@ def run_simulation_dumped(
         model["pressure_schedule"][0],
         model["shear_displacement_pressure"][0],
         not relax_tangential_contact_during_normal,
+        construct_rsf_prestress,
         normal_phase_zero_dofs,
         prescribed_dofs,
     )
@@ -3195,7 +3375,7 @@ def run_simulation_dumped(
         ) = carry
         normal_scale = loading[0]
         shear_traction = loading[1]
-        loading_stop_reached = _shear_loading_stop_reached(
+        loading_stop_reached_before = _shear_loading_stop_reached(
             cum_slip,
             slip_rate,
             shear_loading_stop_mask,
@@ -3205,17 +3385,19 @@ def run_simulation_dumped(
             shear_loading_stop_velocity,
             shear_loading_stop_coverage_fraction,
         )
-        stop_now = (
-            allow_loading_stop and stop_shear_loading and loading_stop_reached
+        stop_before_update = (
+            allow_loading_stop
+            and stop_shear_loading
+            and loading_stop_reached_before
         )
-        loading_stopped_new = loading_stopped | stop_now
+        loading_frozen_before_update = loading_stopped | stop_before_update
         applied_shear_displacement = jnp.where(
-            loading_stopped_new,
+            loading_frozen_before_update,
             previous_shear_displacement,
             loading[4],
         )
         applied_shear_velocity = jnp.where(
-            loading_stopped_new,
+            loading_frozen_before_update,
             jnp.asarray(0.0, dtype=dtype),
             loading[5],
         )
@@ -3248,8 +3430,9 @@ def run_simulation_dumped(
         tangential_friction_active = (
             allow_loading_stop or not relax_tangential_contact_during_normal
         )
+        stick_tangential_contact = construct_rsf_prestress and not allow_loading_stop
         state_for_acceleration = rsf_state
-        if use_regularized_rate_state:
+        if use_regularized_rate_state and not stick_tangential_contact:
             evolved_state = update_ageing_state(
                 rsf_state,
                 friction_velocity,
@@ -3269,19 +3452,25 @@ def run_simulation_dumped(
             shear_traction,
             applied_shear_displacement,
             tangential_friction_active,
+            stick_tangential_contact,
             zero_dofs,
             prescribed_dofs,
         )
         velocity_trial = v_half + dt * accel
         if apply_normal_relaxation:
-            velocity_trial = normal_relaxation_factor * velocity_trial
+            relaxation_factor = jnp.where(
+                loading[6] > 0.5,
+                normal_relaxation_factor,
+                jnp.asarray(1.0, dtype=dtype),
+            )
+            velocity_trial = relaxation_factor * velocity_trial
         v_half_new = apply_constraints(
             velocity_trial,
             zero_dofs,
             prescribed_dofs,
             prescribed_velocities,
         )
-        if use_regularized_rate_state:
+        if use_regularized_rate_state and not stick_tangential_contact:
             (
                 v_half_new,
                 corrected_relative_velocity,
@@ -3323,6 +3512,45 @@ def run_simulation_dumped(
                 jnp.sum(interface_weights * corrected_coefficient)
                 / total_interface_length
             )
+        loading_stop_reached_after = _shear_loading_stop_reached(
+            diag["cum_slip"],
+            diag["slip_rate"],
+            shear_loading_stop_mask,
+            critical_slip_profile,
+            shear_loading_stop_slip,
+            shear_loading_stop_uses_critical_profile,
+            shear_loading_stop_velocity,
+            shear_loading_stop_coverage_fraction,
+        )
+        stop_after_update = (
+            allow_loading_stop
+            and stop_shear_loading
+            and loading_stop_reached_after
+        )
+        loading_stopped_new = (
+            loading_stopped | stop_before_update | stop_after_update
+        )
+        final_shear_velocity = jnp.where(
+            loading_stopped_new,
+            jnp.asarray(0.0, dtype=dtype),
+            applied_shear_velocity,
+        )
+        final_prescribed_velocities = jnp.concatenate(
+            [
+                prescribed_normal_profile * loading[3],
+                jnp.full(
+                    prescribed_shear_dofs.shape,
+                    final_shear_velocity,
+                    dtype=dtype,
+                ),
+            ]
+        )
+        v_half_new = apply_constraints(
+            v_half_new,
+            zero_dofs,
+            prescribed_dofs,
+            final_prescribed_velocities,
+        )
         diag["shear_boundary_reaction"] = (
             jnp.sum(
                 mass_flat[prescribed_shear_dofs]
@@ -3382,6 +3610,120 @@ def run_simulation_dumped(
             sigma_stationary,
         )
 
+    def initialize_traction_consistent_state(
+        current_carry: tuple[jax.Array, ...],
+    ) -> tuple[tuple[jax.Array, ...], dict[str, float], jax.Array]:
+        """Match theta to the equilibrated interface traction before dynamics."""
+        u_flat = current_carry[0]
+        u_moving, u_stationary = split_u(u_flat)
+        rel_normal = u_moving[master_nodes, 0] - u_stationary[slave_nodes, 0]
+        normal_traction = penalty_n * jnp.maximum(rel_normal, 0.0)
+        shear_strength = jnp.abs(current_carry[8])
+        active = (normal_traction > jnp.finfo(dtype).tiny) & (
+            shear_strength > jnp.finfo(dtype).tiny
+        )
+        seed_velocity = jnp.full(
+            master_nodes.shape,
+            model["rsf_initialization_velocity"],
+            dtype=dtype,
+        )
+        safe_normal = jnp.maximum(normal_traction, jnp.finfo(dtype).tiny)
+        safe_shear = jnp.maximum(
+            shear_strength,
+            jnp.finfo(dtype).eps * safe_normal,
+        )
+        inverted_state = regularized_rate_state_initial_state(
+            seed_velocity,
+            safe_shear,
+            safe_normal,
+            reference_friction=rsf_parameters["reference_friction"],
+            direct_effect=rsf_parameters["direct_effect"],
+            state_effect=rsf_parameters["state_effect"],
+            reference_velocity=rsf_parameters["reference_velocity"],
+            characteristic_slip=rsf_parameters["characteristic_slip"],
+        )
+        finite_state = jnp.nan_to_num(
+            inverted_state,
+            nan=jnp.finfo(dtype).tiny,
+            posinf=jnp.finfo(dtype).max,
+            neginf=jnp.finfo(dtype).tiny,
+        )
+        state = jnp.where(
+            active,
+            jnp.maximum(finite_state, jnp.finfo(dtype).tiny),
+            current_carry[4],
+        )
+        reconstructed_strength = regularized_rate_state_strength(
+            seed_velocity,
+            safe_normal,
+            state,
+            reference_friction=rsf_parameters["reference_friction"],
+            direct_effect=rsf_parameters["direct_effect"],
+            state_effect=rsf_parameters["state_effect"],
+            reference_velocity=rsf_parameters["reference_velocity"],
+            characteristic_slip=rsf_parameters["characteristic_slip"],
+        )
+        strength_relative_error = jnp.where(
+            active,
+            jnp.abs(reconstructed_strength - shear_strength)
+            / jnp.maximum(shear_strength, jnp.finfo(dtype).eps * safe_normal),
+            0.0,
+        )
+        state_saturated = active & (
+            ~jnp.isfinite(inverted_state)
+            | (inverted_state <= jnp.finfo(dtype).tiny)
+            | (inverted_state >= jnp.finfo(dtype).max)
+        )
+        rate = jnp.where(active, seed_velocity, 0.0)
+        coefficient = jnp.where(active, shear_strength / safe_normal, 0.0)
+        weighted_active_length = jnp.maximum(
+            jnp.sum(interface_weights * active),
+            jnp.finfo(dtype).tiny,
+        )
+        normalized_active_weights = (
+            interface_weights * active / weighted_active_length
+        )
+        values = {
+            "seed_velocity": float(model["rsf_initialization_velocity"]),
+            "mean_shear_traction": float(
+                jnp.sum(interface_weights * shear_strength) / total_interface_length
+            ),
+            "mean_normal_traction": float(
+                jnp.sum(interface_weights * normal_traction) / total_interface_length
+            ),
+            "mean_friction_coefficient": float(
+                jnp.sum(interface_weights * coefficient) / total_interface_length
+            ),
+            "mean_state": float(
+                jnp.sum(normalized_active_weights * state)
+            ),
+            "min_state": float(jnp.min(jnp.where(active, state, jnp.inf))),
+            "max_state": float(jnp.max(jnp.where(active, state, 0.0))),
+            "active_fraction": float(jnp.mean(active)),
+            "state_saturation_fraction": float(
+                jnp.sum(normalized_active_weights * state_saturated)
+            ),
+            "mean_strength_relative_error": float(
+                jnp.sum(normalized_active_weights * strength_relative_error)
+            ),
+            "max_strength_relative_error": float(
+                jnp.max(strength_relative_error)
+            ),
+        }
+        updated = (
+            current_carry[0],
+            jnp.zeros_like(current_carry[1]),
+            current_carry[2],
+            current_carry[3],
+            state,
+            rate,
+            coefficient,
+            rate,
+            shear_strength,
+            *current_carry[9:],
+        )
+        return updated, values, state
+
     chunk_runners: dict[tuple[str, int], Any] = {}
 
     def advance_chunk(
@@ -3414,6 +3756,8 @@ def run_simulation_dumped(
         phase_steps = max(1, int(phase_steps))
         target_frames = max(1, int(target_frames))
         n_samples = min(phase_steps, target_frames)
+        if n_samples == 1:
+            return np.asarray([phase_steps], dtype=np.int32)
         if n_samples == phase_steps:
             return np.arange(1, phase_steps + 1, dtype=np.int32)
         return np.floor(
@@ -3764,6 +4108,10 @@ def run_simulation_dumped(
         h5.attrs["quasistatic_shear_target"] = model[
             "quasistatic_shear_target"
         ]
+        if model["prestress_shear_displacement"] is not None:
+            h5.attrs["prestress_shear_displacement"] = model[
+                "prestress_shear_displacement"
+            ]
         h5.attrs["quasistatic_shear_start_time"] = model[
             "quasistatic_shear_start_time"
         ]
@@ -3778,6 +4126,9 @@ def run_simulation_dumped(
             h5.attrs["quasistatic_damping_time"] = model[
                 "quasistatic_damping_time"
             ]
+        h5.attrs["normal_relaxation_start_time"] = model[
+            "normal_relaxation_start_time"
+        ]
         h5.attrs["mu_s_start_fraction"] = model["mu_s_start_fraction"]
         h5.attrs["mu_s_end_fraction"] = model["mu_s_end_fraction"]
         h5.attrs["pw_length"] = model["pw_length"]
@@ -3826,6 +4177,14 @@ def run_simulation_dumped(
             "rsf_characteristic_slip"
         ]
         h5.attrs["rsf_initial_state"] = model["rsf_initial_state"]
+        h5.attrs["rsf_initial_state_mode"] = model["rsf_initial_state_mode"]
+        h5.attrs["rsf_initialization_velocity"] = model[
+            "rsf_initialization_velocity"
+        ]
+        if model["rsf_target_normalized_prestress"] is not None:
+            h5.attrs["rsf_target_normalized_prestress"] = model[
+                "rsf_target_normalized_prestress"
+            ]
         if model["rsf_profile_spec"] is not None:
             h5.attrs["rsf_profile_spec_json"] = json.dumps(model["rsf_profile_spec"])
         if model["shear_loading_stiffness"] is not None:
@@ -4194,6 +4553,7 @@ def run_simulation_dumped(
                         np.asarray(model["normal_velocity_pressure"]),
                         np.asarray(model["shear_displacement_pressure"]),
                         np.asarray(model["shear_velocity_pressure"]),
+                        np.asarray(model["normal_relaxation_pressure"]),
                     ]
                 ),
                 pressure_sample_stops,
@@ -4212,6 +4572,7 @@ def run_simulation_dumped(
                         np.asarray(model["normal_velocity_shear"]),
                         np.asarray(model["shear_displacement_shear"]),
                         np.asarray(model["shear_velocity_shear"]),
+                        np.asarray(model["normal_relaxation_shear"]),
                     ]
                 ),
                 shear_sample_stops,
@@ -4290,6 +4651,29 @@ def run_simulation_dumped(
                 )
                 phase_complete = stop == int(simulation_stops[-1])
                 if phase_complete and phase_id == 1 and normal_relaxation:
+                    rsf_handoff_values = None
+                    if (
+                        use_regularized_rate_state
+                        and model["rsf_initial_state_mode"]
+                        == "traction-consistent-handoff"
+                    ):
+                        carry, rsf_handoff_values, handoff_state = (
+                            initialize_traction_consistent_state(carry)
+                        )
+                        for name, value in rsf_handoff_values.items():
+                            h5.attrs[f"rsf_state_handoff_{name}"] = value
+                        interface_group = h5["interface"]
+                        dataset_name = "rsf_handoff_state_profile"
+                        if dataset_name in interface_group:
+                            del interface_group[dataset_name]
+                        interface_group.create_dataset(
+                            dataset_name,
+                            data=np.asarray(
+                                handoff_state[interface_plot_mask],
+                                dtype=np.float32,
+                            ),
+                        )
+                        h5.attrs["rsf_state_handoff_reinitialized"] = 1
                     stored_energy = max(abs(float(row[7])) + abs(float(row[8])), 1.0e-30)
                     slip_candidates = _shear_loading_stop_candidates(
                         carry[3],
@@ -4445,6 +4829,26 @@ def run_simulation_dumped(
         if quasistatic_preloading
         else None
     )
+    rsf_state_handoff = None
+    if model["rsf_initial_state_mode"] == "traction-consistent-handoff":
+        names = (
+            "seed_velocity",
+            "mean_shear_traction",
+            "mean_normal_traction",
+            "mean_friction_coefficient",
+            "mean_state",
+            "min_state",
+            "max_state",
+            "active_fraction",
+            "state_saturation_fraction",
+            "mean_strength_relative_error",
+            "max_strength_relative_error",
+        )
+        with h5py.File(data_path, "r") as h5:
+            rsf_state_handoff = {
+                name: float(h5.attrs[f"rsf_state_handoff_{name}"])
+                for name in names
+            }
 
     summary = {
         "backend": jax.default_backend(),
@@ -4524,11 +4928,15 @@ def run_simulation_dumped(
         "shear_displacement_s": model["shear_displacement_s"],
         "quasistatic_shear_fraction": model["quasistatic_shear_fraction"],
         "quasistatic_shear_target": model["quasistatic_shear_target"],
+        "prestress_shear_displacement": model["prestress_shear_displacement"],
         "quasistatic_shear_start_time": model[
             "quasistatic_shear_start_time"
         ],
         "quasistatic_shear_ramp_time": model["quasistatic_shear_ramp_time"],
         "normal_relaxation_time": model["normal_relaxation_time"],
+        "normal_relaxation_start_time": model[
+            "normal_relaxation_start_time"
+        ],
         "normal_relaxation_handoff": normal_relaxation_handoff,
         "quasistatic_damping_time": model["quasistatic_damping_time"],
         "quasistatic_handoff": quasistatic_handoff,
@@ -4567,6 +4975,12 @@ def run_simulation_dumped(
         "rsf_reference_state": model["rsf_reference_state"],
         "rsf_characteristic_slip": model["rsf_characteristic_slip"],
         "rsf_initial_state": model["rsf_initial_state"],
+        "rsf_initial_state_mode": model["rsf_initial_state_mode"],
+        "rsf_initialization_velocity": model["rsf_initialization_velocity"],
+        "rsf_target_normalized_prestress": model[
+            "rsf_target_normalized_prestress"
+        ],
+        "rsf_state_handoff": rsf_state_handoff,
         "rsf_profile": model["rsf_profile_spec"],
         "leading_edge_creep_length": model["leading_edge_creep_length"],
         "leading_edge_creep_transition_length": model[

@@ -158,6 +158,37 @@ def test_tpv101_initial_state_matches_prescribed_strength():
     assert float(recovered_strength) == pytest.approx(75.0e6, rel=2e-6)
 
 
+def test_tpv101_initial_state_inverse_is_stable_for_small_stress_ratio():
+    velocity = jnp.asarray(1.0e-4, dtype=jnp.float32)
+    normal_stress = jnp.asarray(16.0, dtype=jnp.float32)
+    shear_stress = jnp.asarray(1.0e-5, dtype=jnp.float32)
+    direct_effect = jnp.asarray(0.005, dtype=jnp.float32)
+    state = regularized_rate_state_initial_state(
+        velocity,
+        shear_stress,
+        normal_stress,
+        reference_friction=0.8,
+        direct_effect=direct_effect,
+        state_effect=0.029123527228205267,
+        reference_velocity=1.0e-4,
+        characteristic_slip=0.00042852936846183833,
+    )
+    recovered_strength = regularized_rate_state_strength(
+        velocity,
+        normal_stress,
+        state,
+        reference_friction=0.8,
+        direct_effect=direct_effect,
+        state_effect=0.029123527228205267,
+        reference_velocity=1.0e-4,
+        characteristic_slip=0.00042852936846183833,
+    )
+
+    assert np.isfinite(float(state))
+    assert float(state) > 0.0
+    assert float(recovered_strength) == pytest.approx(1.0e-5, rel=2.0e-4)
+
+
 def test_tpv101_regularized_strength_is_finite_across_extreme_rates():
     velocity = jnp.asarray([1.0e-12, 1.0e-6, 1.0, 1.0e3])
     state = jnp.full(velocity.shape, 1.606238999213454e9)

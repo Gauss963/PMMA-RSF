@@ -28,11 +28,10 @@ Each shear phase lasts at least 75 ms and at least 30 ms beyond the nominal
 ramp endpoint. The full-fault loading stop remains TS0278's one-`D_c`
 coverage trigger.
 
-The separate TS0320 control repeats TS0309's parameters but freezes loading at the first
-`|V| >= 500 mm/s` in the loading-end 5-25 mm band. Its practically zero slip
-threshold is intentional: normal loading already produces several `D_c` of
-cumulative slip, so an absolute-slip trigger would not represent new nucleation.
-No RSF state or cumulative slip is reset. It is not part of the 16-run sweep job.
+The former standalone TS0320 early-stop control was retired after this sweep.
+TS0320 and later IDs are reserved for the traction-consistent prestress sweep,
+which applies the same loading-end stop criterion with corrected RSF initial
+conditions.
 
 Each run stores 4400 bulk shear frames and 50000 interface shear frames. The
 16-run combined estimated dump is about 1.18 TB and is gated below 1.4 TB

@@ -157,7 +157,8 @@ def regularized_rate_state_initial_state(
     This is the analytic inverse of :func:`regularized_rate_state_strength`.
     """
     stress_ratio = jnp.abs(shear_stress) / (direct_effect * normal_stress)
-    log_two_sinh = stress_ratio + jnp.log1p(-jnp.exp(-2.0 * stress_ratio))
+    # ``-expm1(-2x)`` retains the small difference from one when x is tiny.
+    log_two_sinh = stress_ratio + jnp.log(-jnp.expm1(-2.0 * stress_ratio))
     log_state = (
         jnp.log(characteristic_slip / reference_velocity)
         + (
