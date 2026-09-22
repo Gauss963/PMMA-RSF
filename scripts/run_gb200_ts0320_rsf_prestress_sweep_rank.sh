@@ -8,6 +8,8 @@ PYTHON=$ENV_PREFIX/bin/python
 SWEEP_INDEX=${SWEEP_INDEX:?Set SWEEP_INDEX to 1 through 16.}
 RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-54000}
 MIN_FREE_BYTES=${MIN_FREE_BYTES:-25000000000}
+ANALYSIS_SCRIPT=${ANALYSIS_SCRIPT:-scripts/analyze_rsf_prestress_sweep.py}
+ANALYSIS_LOG=${ANALYSIS_LOG:-rsf_prestress_analysis.log}
 
 if (( SWEEP_INDEX < 1 || SWEEP_INDEX > 16 )); then
   echo "SWEEP_INDEX must be 1 through 16." >&2
@@ -144,8 +146,8 @@ run_one() {
   run_status=$("$PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$run_dir/status.json")
   echo "$run_id ended with status $run_status at $(date -u +%Y-%m-%dT%H:%M:%SZ)"
   if [[ "$run_status" == complete ]]; then
-    if ! "$PYTHON" scripts/analyze_rsf_prestress_sweep.py "$run_dir" \
-      > "$log_dir/rsf_prestress_analysis.log" 2>&1; then
+    if ! "$PYTHON" "$ANALYSIS_SCRIPT" "$run_dir" \
+      > "$log_dir/$ANALYSIS_LOG" 2>&1; then
       echo "$run_id analysis failed; simulation data remains available." >&2
     fi
   fi
@@ -154,4 +156,4 @@ run_one() {
 
 run_number=$((319 + SWEEP_INDEX))
 printf -v case_name 'rsf_%04d_rsf_prestress_%02d.toml' "$run_number" "$SWEEP_INDEX"
-run_one "$run_number" "$case_name"
+run_one "${SWEEP_RUN_NUMBER:-$run_number}" "${SWEEP_CASE_FILE:-$case_name}"
