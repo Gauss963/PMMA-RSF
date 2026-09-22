@@ -22,7 +22,9 @@ from plot_contact_friction_map import (  # noqa: E402
 )
 from plot_contact_mu_disp import plot_contact_mu_disp  # noqa: E402
 from plot_rsf_rupture_analysis import (  # noqa: E402
+    _arrival_history,
     _plot_speed,
+    _speed_diagnostics,
     _zone_metadata,
     first_velocity_crossing,
     optional_linear_arrival_fit,
@@ -107,11 +109,64 @@ def test_speed_plot_tolerates_one_unreached_threshold(tmp_path):
         stop_time_ms=3.0,
         zones=zones,
         wave_speeds={"c_r": 1000.0, "c_s": 1200.0, "c_p": 2400.0},
+        sampling_source="interface_high_rate",
+        saved_dt_us=1.5,
         output_dir=tmp_path,
         dpi=72,
     )
 
     assert all(path.exists() for path in paths)
+
+
+def test_arrival_history_prefers_independent_high_rate_output(tmp_path):
+    input_path = tmp_path / "history.h5"
+    columns = np.asarray([b"time", b"shear_loading_stopped"])
+    with h5py.File(input_path, "w") as h5:
+        h5.attrs["dt"] = 1.0e-6
+        h5.attrs["pressure_steps"] = 2
+        h5.create_dataset("history", data=np.zeros((2, 2)))
+        h5.create_dataset("history_columns", data=columns)
+        h5.create_dataset("phase_id", data=np.asarray([1, 2]))
+        interface = h5.create_group("interface")
+        interface.create_dataset("slip_rate", data=np.zeros((2, 2)))
+        high_rate = h5.create_group("interface_high_rate")
+        high_rate.create_dataset(
+            "history",
+            data=np.asarray([[2.0e-6, 0.0], [3.0e-6, 0.0], [4.0e-6, 1.0]]),
+        )
+        high_rate.create_dataset("history_columns", data=columns)
+        high_rate.create_dataset("phase_id", data=np.asarray([2, 2, 2]))
+        high_rate.create_dataset("slip_rate", data=np.zeros((3, 2)))
+
+        (
+            source,
+            history,
+            decoded,
+            time_ms,
+            shear_indices,
+            name,
+            saved_dt_us,
+        ) = _arrival_history(h5)
+        source_name = source.name
+
+    assert source_name == "/interface_high_rate"
+    assert history.shape == (3, 2)
+    assert decoded == ["time", "shear_loading_stopped"]
+    assert time_ms == pytest.approx([0.0, 0.001, 0.002])
+    assert shear_indices.tolist() == [0, 1, 2]
+    assert name == "interface_high_rate"
+    assert saved_dt_us == pytest.approx(1.0)
+
+
+def test_speed_diagnostics_classifies_supershear_front():
+    diagnostics = _speed_diagnostics(
+        2700.0,
+        {"c_r": 1519.0, "c_s": 1668.0, "c_p": 2723.0},
+    )
+
+    assert diagnostics["regime"] == "supershear"
+    assert diagnostics["is_supershear"] is True
+    assert diagnostics["ratios"]["c_p"] == pytest.approx(2700.0 / 2723.0)
 
 
 def test_zone_metadata_uses_independent_transition_lengths(tmp_path):

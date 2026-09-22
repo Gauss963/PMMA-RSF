@@ -226,6 +226,81 @@ def _serializable_fit(fit: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _arrival_history(
+    h5: h5py.File,
+) -> tuple[
+    h5py.Group,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    str,
+    float,
+]:
+    """Return the highest-rate interface history available in the dump."""
+    if "interface_high_rate" in h5:
+        source = h5["interface_high_rate"]
+        source_name = "interface_high_rate"
+        history = np.asarray(source["history"], dtype=np.float64)
+        columns = decode_strings(np.asarray(source["history_columns"]))
+        phase_id = np.asarray(source["phase_id"], dtype=np.int8)
+    else:
+        source = h5["interface"]
+        source_name = "interface"
+        history = np.asarray(h5["history"], dtype=np.float64)
+        columns = decode_strings(np.asarray(h5["history_columns"]))
+        phase_id = np.asarray(h5["phase_id"], dtype=np.int8)
+
+    if history.shape[0] != source["slip_rate"].shape[0]:
+        raise ValueError(
+            f"{source_name} history and slip-rate frame counts do not match."
+        )
+    pressure_time = float(h5.attrs["pressure_steps"] * h5.attrs["dt"])
+    shear_time_ms = (history[:, columns.index("time")] - pressure_time) * 1e3
+    shear_indices = np.flatnonzero(phase_id == 2)
+    if len(shear_indices) < 2:
+        raise ValueError(f"{source_name} does not contain two shear frames.")
+    saved_dt_us = float(np.median(np.diff(shear_time_ms[shear_indices])) * 1e3)
+    return (
+        source,
+        history,
+        columns,
+        shear_time_ms,
+        shear_indices,
+        source_name,
+        saved_dt_us,
+    )
+
+
+def _speed_diagnostics(
+    representative_speed: float | None,
+    wave_speeds: dict[str, float],
+) -> dict[str, object]:
+    if representative_speed is None:
+        return {
+            "regime": "unavailable",
+            "is_supershear": None,
+            "ratios": None,
+        }
+    ratios = {
+        name: representative_speed / float(wave_speeds[name])
+        for name in ("c_r", "c_s", "c_p")
+    }
+    if representative_speed < wave_speeds["c_r"]:
+        regime = "sub-Rayleigh"
+    elif representative_speed <= wave_speeds["c_s"]:
+        regime = "Rayleigh-to-shear transition band"
+    elif representative_speed <= wave_speeds["c_p"]:
+        regime = "supershear"
+    else:
+        regime = "above compressional-wave speed"
+    return {
+        "regime": regime,
+        "is_supershear": representative_speed > wave_speeds["c_s"],
+        "ratios": ratios,
+    }
+
+
 def _zone_metadata(h5: h5py.File, contact_y: np.ndarray) -> dict[str, float]:
     spec = json.loads(str(h5.attrs.get("rsf_profile_spec_json", "{}")))
     y_min = float(np.min(contact_y))
@@ -310,6 +385,8 @@ def _plot_speed(
     stop_time_ms: float,
     zones: dict[str, float],
     wave_speeds: dict[str, float],
+    sampling_source: str,
+    saved_dt_us: float | None,
     output_dir: Path,
     dpi: int,
 ) -> tuple[Path, Path]:
@@ -424,10 +501,16 @@ def _plot_speed(
             fit_notes.append(
                 f"{label} fit unavailable (n={int(fit['finite_point_count'])})"
             )
+    sampling_note = sampling_source
+    if saved_dt_us is not None:
+        sampling_note += rf", $\Delta t_{{save}}={saved_dt_us:.2f}\ \mu$s"
     speed_axis.set_title(
-        "Measured and material speeds\n" + "; ".join(fit_notes),
+        "Measured and material speeds\n"
+        + "; ".join(fit_notes)
+        + "\n"
+        + sampling_note,
         loc="left",
-        fontsize=8.2,
+        fontsize=7.8,
     )
     speed_axis.grid(axis="x")
     speed_axis.spines[["top", "right", "left"]].set_visible(False)
@@ -620,21 +703,24 @@ def main() -> int:
         reference_velocity = np.asarray(
             interface["rsf_reference_velocity_profile"], dtype=np.float64
         )
-        history = np.asarray(h5["history"], dtype=np.float64)
-        columns = decode_strings(np.asarray(h5["history_columns"]))
-        phase_id = np.asarray(h5["phase_id"], dtype=np.int8)
-        pressure_time = float(h5.attrs["pressure_steps"] * h5.attrs["dt"])
-        shear_time_ms = (history[:, columns.index("time")] - pressure_time) * 1e3
-        shear_indices = np.flatnonzero(phase_id == 2)
+        (
+            arrival_source,
+            history,
+            columns,
+            shear_time_ms,
+            shear_indices,
+            sampling_source,
+            saved_dt_us,
+        ) = _arrival_history(h5)
         low_arrival = first_velocity_crossing(
-            interface["slip_rate"],
+            arrival_source["slip_rate"],
             shear_indices,
             shear_time_ms,
             velocity_thresholds[0],
             chunk_frames=args.chunk_frames,
         )
         high_arrival = first_velocity_crossing(
-            interface["slip_rate"],
+            arrival_source["slip_rate"],
             shear_indices,
             shear_time_ms,
             velocity_thresholds[1],
@@ -667,6 +753,8 @@ def main() -> int:
         stop_time_ms=stop_time_ms,
         zones=zones,
         wave_speeds=wave_speeds,
+        sampling_source=sampling_source,
+        saved_dt_us=saved_dt_us,
         output_dir=output_dir,
         dpi=args.dpi,
     )
@@ -694,6 +782,7 @@ def main() -> int:
     representative_speed = (
         float(np.mean(available_speeds)) if available_speeds else None
     )
+    speed_diagnostics = _speed_diagnostics(representative_speed, wave_speeds)
     payload = {
         "friction_law": friction_law,
         "fit_interval_mm": [args.fit_start, args.fit_end],
@@ -702,6 +791,9 @@ def main() -> int:
         "high_threshold_speed_m_per_s": high_fit["speed_m_per_s"],
         "stable_speed_m_per_s": stable_speed,
         "representative_speed_m_per_s": representative_speed,
+        "sampling_source": sampling_source,
+        "saved_dt_us": saved_dt_us,
+        "speed_diagnostics": speed_diagnostics,
         "arrival_fits": {
             "low_velocity_threshold": _serializable_fit(low_fit),
             "high_velocity_threshold": _serializable_fit(high_fit),
