@@ -231,3 +231,51 @@ def test_regularized_velocity_projection_satisfies_tpv_residual():
     ) - np.abs(np.asarray(free_velocity))
     assert np.allclose(residual, 0.0, rtol=2e-6, atol=2e-6)
     assert np.sign(np.asarray(corrected)[1:]).tolist() == [1.0, -1.0]
+
+
+def test_near_sticking_projection_retains_traction_even_if_speed_underflows():
+    a = jnp.asarray([0.0025, 0.005, 0.01, 0.02], dtype=jnp.float32)
+    factor = jnp.asarray(69.68641115, dtype=jnp.float32)
+    free = jnp.full(a.shape, factor * 16.0 * 0.1)
+    corrected, traction = jax.jit(project_regularized_rate_state_velocity)(
+        free, jnp.asarray(16.0), jnp.full(a.shape, 4.285293684618383), factor,
+        reference_friction=0.8, direct_effect=a, state_effect=a + 0.024123527228205266,
+        reference_velocity=1e-4, characteristic_slip=0.00042852936846183833,
+    )
+    np.testing.assert_allclose(traction, 1.6, rtol=2e-5)
+    np.testing.assert_allclose(corrected + factor * traction, free, rtol=2e-5)
+    assert np.max(np.abs(corrected)) < 1e-18
+
+
+def test_log_projection_agrees_with_independently_prescribed_roots():
+    # Manufacture roots across near-rest, dynamic and SCEC-scale velocities.
+    speed = jnp.asarray([1e-35, 1e-20, 1e-6, 0.1, 1.0, 1000.0], dtype=jnp.float32)
+    for f0, a, b, v0, dc, theta, sigma in (
+        (0.8, 0.005, 0.0291235272, 1e-4, 0.000428529, 4.28529, 16.0),
+        (0.6, 0.008, 0.012, 1e-6, 0.02, 1.606238999e9, 120e6),
+    ):
+        kw = dict(reference_friction=f0, direct_effect=a, state_effect=b,
+                  reference_velocity=v0, characteristic_slip=dc)
+        state = jnp.full(speed.shape, theta)
+        stress = jnp.asarray(sigma)
+        tau = regularized_rate_state_strength(speed, stress, state, **kw)
+        factor = jnp.asarray(0.002 if sigma > 1e6 else 69.6864)
+        free = speed + factor * tau
+        projected, strength = project_regularized_rate_state_velocity(free, stress, state, factor, **kw)
+        np.testing.assert_allclose(projected, speed, rtol=2e-4, atol=1e-37)
+        np.testing.assert_allclose(strength, tau, rtol=2e-5)
+        np.testing.assert_allclose(projected + factor * strength, free, rtol=2e-5)
+
+
+def test_log_projection_open_contact_and_disabled_impulse():
+    free = jnp.asarray([0., -4., 2.], dtype=jnp.float32)
+    normal = jnp.asarray([16., 0., 16.], dtype=jnp.float32)
+    state = jnp.ones_like(free)
+    v, tau = project_regularized_rate_state_velocity(
+        free, normal, state, jnp.asarray([1., 1., 0.]),
+        reference_friction=.8, direct_effect=.005, state_effect=.02,
+        reference_velocity=1e-4, characteristic_slip=.001,
+    )
+    np.testing.assert_array_equal(v, free)
+    assert tau[0] == 0 and tau[1] == 0
+    assert np.isfinite(tau).all()

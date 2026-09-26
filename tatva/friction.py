@@ -187,39 +187,52 @@ def project_regularized_rate_state_velocity(
     """Apply the implicit RSF velocity projection used by TPV101/102.
 
     ``relative_impulse_factor`` is ``dt * interface_weight * (1/m+ + 1/m-)``.
-    Bisection solves ``V + factor * tau(V, theta) = V_free`` independently at
-    every contact node and returns signed relative velocity plus strength.
+    Log-speed bisection solves ``V + factor * tau(V, theta) = V_free``.
+    Near sticking the root can be hundreds of decades below ``V_free``;
+    linear-speed bisection cannot resolve it in a fixed number of iterations.
+    Strength is evaluated from log speed, including when speed underflows.
     """
     free_speed = jnp.abs(free_relative_velocity)
 
-    def residual(speed: jax.Array) -> jax.Array:
-        strength = regularized_rate_state_strength(
-            speed,
-            normal_stress,
-            state,
-            reference_friction=reference_friction,
-            direct_effect=direct_effect,
-            state_effect=state_effect,
-            reference_velocity=reference_velocity,
-            characteristic_slip=characteristic_slip,
+    active = (free_speed > 0) & (normal_stress > 0) & (relative_impulse_factor > 0)
+    safe_free = jnp.where(active, free_speed, 1.0)
+    factor = jnp.where(active, relative_impulse_factor, 1.0)
+    a_sigma = direct_effect * jnp.where(active, normal_stress, 1.0)
+    state_term = (
+        reference_friction + state_effect * jnp.log(
+            reference_velocity * jnp.maximum(state, jnp.finfo(state.dtype).tiny)
+            / characteristic_slip
         )
-        return speed + relative_impulse_factor * strength - free_speed
+    ) / direct_effect
+    offset = state_term - jnp.log(2.0 * reference_velocity)
 
-    lower = jnp.zeros_like(free_speed)
-    upper = free_speed
+    def inverse_log_speed(strength: jax.Array) -> jax.Array:
+        ratio = strength / a_sigma
+        log_sinh = ratio + jnp.log(-jnp.expm1(-2.0 * ratio)) - jnp.log(2.0)
+        return log_sinh - offset
+
+    # At the lower bound both V and factor*tau are <= V_free/2.
+    # At either upper bound one of the two terms alone equals V_free.
+    log_free = jnp.log(safe_free)
+    lower = jnp.minimum(log_free - jnp.log(2.0), inverse_log_speed(0.5 * safe_free / factor))
+    upper = jnp.minimum(log_free, inverse_log_speed(safe_free / factor))
+
+    def strength_from_log(log_speed: jax.Array) -> jax.Array:
+        return a_sigma * _asinh_exp(log_speed + offset)
 
     def bisect(_iteration: int, bounds: tuple[jax.Array, jax.Array]):
         low, high = bounds
         midpoint = 0.5 * (low + high)
-        move_low = residual(midpoint) < 0.0
+        move_low = (jnp.exp(midpoint) + factor * strength_from_log(midpoint)) < safe_free
         return jnp.where(move_low, midpoint, low), jnp.where(
             move_low, high, midpoint
         )
 
     lower, upper = jax.lax.fori_loop(0, iterations, bisect, (lower, upper))
-    corrected_speed = 0.5 * (lower + upper)
-    strength = regularized_rate_state_strength(
-        corrected_speed,
+    log_speed = 0.5 * (lower + upper)
+    corrected_speed = jnp.where(active, jnp.exp(log_speed), free_speed)
+    unprojected_strength = regularized_rate_state_strength(
+        free_speed,
         normal_stress,
         state,
         reference_friction=reference_friction,
@@ -228,6 +241,7 @@ def project_regularized_rate_state_velocity(
         reference_velocity=reference_velocity,
         characteristic_slip=characteristic_slip,
     )
+    strength = jnp.where(active, strength_from_log(log_speed), unprojected_strength)
     direction = jnp.where(free_relative_velocity >= 0.0, 1.0, -1.0)
     return direction * corrected_speed, strength
 
