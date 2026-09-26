@@ -19,6 +19,7 @@ def test_non_gb200_slurm_scripts_leave_memory_allocation_to_scheduler():
         "PMMA-RSF-GB200-R1-LOADING-VN-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-PRESTRESS-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-NUCLEATION-SWEEP.slurm",
+        "PMMA-RSF-GB200-R1-EXTENSION-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-RSF-RATE-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-CHAMFER-DEPTH-SWEEP.slurm",
         "PMMA-RSF-GB200-R1-CZM-XC-SWEEP.slurm",

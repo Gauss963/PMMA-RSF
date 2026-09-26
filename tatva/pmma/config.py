@@ -15,6 +15,7 @@ class BlockConfig:
     dimensions: tuple[float, float]
     leading_chamfer_along_fault: float = 0.0
     leading_chamfer_perpendicular: float = 0.0
+    loading_extension_length: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -189,6 +190,9 @@ def load_case_config(path: str | Path) -> PMMACaseConfig:
             ),
             leading_chamfer_perpendicular=float(
                 geometry["moving"].get("leading_chamfer_perpendicular", 0.0)
+            ),
+            loading_extension_length=float(
+                geometry["moving"].get("loading_extension_length", 0.0)
             ),
         ),
         stationary=BlockConfig(
@@ -382,6 +386,15 @@ def _validate(config: PMMACaseConfig) -> None:
         raise ValueError("Only geometry.moving supports a leading-edge chamfer.")
     if config.numerics.mesh_size <= 0.0:
         raise ValueError("numerics.mesh_size must be positive.")
+    extension = config.moving.loading_extension_length
+    if not math.isfinite(extension) or extension < 0.0:
+        raise ValueError("geometry.moving.loading_extension_length must be finite and non-negative.")
+    if extension > 0.0:
+        if config.moving.origin[1] != config.stationary.origin[1]:
+            raise ValueError("A loading extension requires the original blocks to share y_min.")
+        cells = extension / config.numerics.mesh_size
+        if not math.isclose(cells, round(cells), abs_tol=1e-8, rel_tol=0.0):
+            raise ValueError("The loading extension must be an integer number of mesh cells.")
     if not 0.0 < config.numerics.cfl <= 1.0:
         raise ValueError("numerics.cfl must be in the interval (0, 1].")
     if config.numerics.time_step is not None and config.numerics.time_step <= 0.0:

@@ -41,7 +41,8 @@ def estimate_case_size(config: PMMACaseConfig) -> dict[str, Any]:
     """Return conservative uncompressed sizes; HDF5 compression is not assumed."""
     mesh_size = config.numerics.mesh_size
     moving_nodes, moving_elements, moving_min_spacing = _block_counts(
-        config.moving.dimensions, mesh_size
+        (config.moving.dimensions[0],
+         config.moving.dimensions[1] + config.moving.loading_extension_length), mesh_size
     )
     if config.moving.leading_chamfer_along_fault > 0.0:
         moving_min_spacing = min(
@@ -79,8 +80,8 @@ def estimate_case_size(config: PMMACaseConfig) -> dict[str, Any]:
     bytes_per_bulk_frame = 4 * (
         2 * node_vector_count * nodes + 4 * element_tensor_count * elements
     )
-    # Seven dynamic interface arrays plus a 13-column history row.
-    bytes_per_interface_frame = 4 * (7 * fault_nodes + 13)
+    # Seven dynamic interface arrays plus a 17-column history row.
+    bytes_per_interface_frame = 4 * (7 * fault_nodes + 17)
     geometry_bytes = 4 * (
         2 * nodes + NODES_PER_ELEMENT * elements + 5 * fault_nodes
     )
@@ -116,6 +117,7 @@ def estimate_case_size(config: PMMACaseConfig) -> dict[str, Any]:
     )
     return {
         "mesh_size_mm": mesh_size,
+        "loading_extension_length_mm": config.moving.loading_extension_length,
         "minimum_cell_size_mm": minimum_cell_size,
         "moving_nodes": moving_nodes,
         "stationary_nodes": stationary_nodes,

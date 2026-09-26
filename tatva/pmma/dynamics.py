@@ -5,7 +5,7 @@ import math
 import os
 import signal
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +87,7 @@ class RunConfig:
     contact_safety_factor: float = 0.25
     time_step_override: float | None = None
     operator_batch_size: int | None = None
+    moving_loading_extension_length: float = 0.0
     moving_leading_chamfer_along_fault: float = 0.0
     moving_leading_chamfer_perpendicular: float = 0.0
     normal_loading_mode: str = "stress"
@@ -1013,8 +1014,21 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
     if config.time_step_override is not None and config.time_step_override <= 0.0:
         raise ValueError("time_step_override must be positive when specified.")
 
-    moving = build_block_model(
+    extension = float(config.moving_loading_extension_length)
+    if not math.isfinite(extension) or extension < 0.0:
+        raise ValueError("moving_loading_extension_length must be finite and non-negative.")
+    if extension > 0.0 and (dimension != 2 or not math.isclose(
+        extension / config.mesh_size, round(extension / config.mesh_size),
+        rel_tol=0.0, abs_tol=1e-8,
+    ) or case.moving.origin[1] != case.stationary.origin[1]):
+        raise ValueError("The 2-D extension must align with the original fault and mesh cells.")
+    extended_spec = replace(
         case.moving,
+        origin=(case.moving.origin[0], case.moving.origin[1] - extension),
+        dimensions=(case.moving.dimensions[0], case.moving.dimensions[1] + extension),
+    )
+    moving = build_block_model(
+        extended_spec,
         config.mesh_size,
         dtype,
         dimension=dimension,
@@ -1065,6 +1079,15 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
 
     fixed_dofs = make_dirichlet_dofs(stationary, moving_offset, dimension=dimension)
     moving_normal_edge_nodes = moving.boundary_nodes["moving-block-back"]
+    normal_weights = moving.boundary_weights["moving-block-back"]
+    if extension > 0.0:
+        # Integrate complete loaded segments, not masked full-face nodal weights:
+        # the node at y=0 must retain only its original half-segment weight.
+        segments = np.asarray(moving.boundary_segments["moving-block-back"])
+        selected = np.all(np.asarray(moving.mesh.coords)[segments, 1] >= case.moving.origin[1], axis=1)
+        segments = jnp.asarray(segments[selected])
+        normal_weights = boundary_weights(moving.mesh, segments, dtype)
+        moving_normal_edge_nodes = jnp.asarray(np.unique(np.asarray(segments)), dtype=jnp.int32)
     moving_normal_edge_dofs = make_global_dof_indices(
         moving_normal_edge_nodes,
         0,
@@ -1127,7 +1150,7 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
             dimension,
         )
     ].add(
-        moving.boundary_weights["moving-block-back"]
+        normal_weights
         * jnp.asarray(normal_stress, dtype=dtype)
     )
 
@@ -1315,6 +1338,12 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
     interface_plot_master_nodes = select_interface_plot_nodes(moving, master_nodes)
     interface_plot_slave_nodes = select_interface_plot_nodes(stationary, slave_nodes)
     interface_weights = moving.boundary_weights[case.simulation.master_surface][master_nodes]
+    if extension > 0.0:
+        segments = np.asarray(moving.boundary_segments[case.simulation.master_surface])
+        selected = np.all(np.isin(segments, np.asarray(master_nodes)), axis=1)
+        interface_weights = boundary_weights(
+            moving.mesh, jnp.asarray(segments[selected]), dtype
+        )[master_nodes]
 
     penalty_n = (
         config.normal_penalty
@@ -2995,25 +3024,34 @@ def run_simulation_dumped(
 
     moving_integration_weights = moving.operator.get_integration_weights()
     stationary_integration_weights = stationary.operator.get_integration_weights()
+    extension_elements = jnp.mean(moving.mesh.coords[moving.mesh.elements, 1], axis=1) < case.moving.origin[1]
+    normal_force_weights = force_normal[moving_normal_edge_dofs]
+    normal_force_total = jnp.sum(normal_force_weights)
 
-    def elastic_energy_total(u_flat: jax.Array) -> jax.Array:
+    def elastic_energy_with_extension(u_flat: jax.Array) -> tuple[jax.Array, jax.Array]:
         u_moving, u_stationary = split_u(u_flat)
         eps_moving = compute_strain(moving.operator.grad(u_moving))
         eps_stationary = compute_strain(stationary.operator.grad(u_stationary))
-        return moving.operator.integrate(
+        moving_density = (
             moving_material.mu * jnp.einsum("...ij,...ij->...", eps_moving, eps_moving)
             + 0.5
             * moving_material.lmbda
             * jnp.trace(eps_moving, axis1=-2, axis2=-1) ** 2
-        ) + stationary.operator.integrate(
+        )
+        total = moving.operator.integrate(moving_density) + stationary.operator.integrate(
             stationary_material.mu
             * jnp.einsum("...ij,...ij->...", eps_stationary, eps_stationary)
             + 0.5
             * stationary_material.lmbda
             * jnp.trace(eps_stationary, axis1=-2, axis2=-1) ** 2
         )
+        extension_energy = (
+            jnp.sum(moving_density * moving_integration_weights * extension_elements[:, None])
+            if config.moving_loading_extension_length > 0.0 else jnp.asarray(0.0, dtype=dtype)
+        )
+        return total, extension_energy
 
-    elastic_energy_and_force = jax.jit(jax.value_and_grad(elastic_energy_total))
+    elastic_energy_and_force = jax.jit(jax.value_and_grad(elastic_energy_with_extension, has_aux=True))
 
     total_interface_length = jnp.sum(interface_weights)
     moving_iface_x = dimension * master_nodes
@@ -3244,7 +3282,7 @@ def run_simulation_dumped(
         zero_dofs: jax.Array,
         prescribed_dofs: jax.Array,
     ) -> tuple[jax.Array, dict[str, jax.Array]]:
-        elastic_energy, elastic_force = elastic_energy_and_force(u_flat)
+        (elastic_energy, extension_energy), elastic_force = elastic_energy_and_force(u_flat)
         contact_force, plastic_new, cum_new, contact_diag = contact_response(
             u_flat,
             v_flat,
@@ -3273,6 +3311,11 @@ def run_simulation_dumped(
         )
         diag = {
             "elastic_energy": elastic_energy,
+            "extension_elastic_energy": extension_energy,
+            "normal_loading_coordinate": jnp.dot(
+                normal_force_weights, u_flat[moving_normal_edge_dofs]
+            ) / jnp.maximum(normal_force_total, 1e-30),
+            "normal_external_force": normal_scale * normal_force_total if not use_normal_displacement else jnp.asarray(0.0, dtype=dtype),
             "kinetic_energy": jnp.array(0.0, dtype=dtype),
             **contact_diag,
             "applied_shear": shear_traction,
@@ -3308,6 +3351,9 @@ def run_simulation_dumped(
                 loading_stopped.astype(dtype),
                 diag["loading_face_displacement"],
                 diag["shear_boundary_reaction"],
+                diag["extension_elastic_energy"],
+                diag["normal_loading_coordinate"],
+                diag["normal_external_force"],
             ],
             dtype=dtype,
         )
@@ -3819,6 +3865,9 @@ def run_simulation_dumped(
         "shear_loading_stopped",
         "loading_face_displacement",
         "shear_boundary_reaction",
+        "extension_elastic_energy",
+        "normal_loading_coordinate",
+        "normal_external_force",
     ]
 
     data_path.parent.mkdir(parents=True, exist_ok=True)
@@ -4168,6 +4217,14 @@ def run_simulation_dumped(
             "moving_leading_chamfer_perpendicular"
         ]
         h5.attrs["friction_law"] = model["friction_law"]
+        if use_regularized_rate_state:
+            h5.attrs["rsf_velocity_projection"] = "log-speed-bisection-v1"
+        h5.attrs["moving_loading_extension_length"] = config.moving_loading_extension_length
+        h5.attrs["moving_actual_origin"] = np.asarray(moving.spec.origin)
+        h5.attrs["moving_actual_dimensions"] = np.asarray(moving.spec.dimensions)
+        h5.attrs["normal_loading_y_bounds"] = np.asarray([
+            case.moving.origin[1], case.moving.origin[1] + case.moving.dimensions[1]
+        ])
         h5.attrs["rsf_reference_friction"] = model["rsf_reference_friction"]
         h5.attrs["rsf_direct_effect"] = model["rsf_direct_effect"]
         h5.attrs["rsf_state_effect"] = model["rsf_state_effect"]

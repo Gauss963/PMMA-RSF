@@ -41,6 +41,10 @@ if len(devices) != 1 or devices[0].platform != "gpu":
     raise SystemExit("Expected exactly one visible GPU per task.")
 PY
 
+if [[ -n ${RANK_PREFLIGHT_SCRIPT:-} ]]; then
+  "$PYTHON" "$RANK_PREFLIGHT_SCRIPT"
+fi
+
 simulation_pid=""
 guard_pid=""
 monitor_pid=""

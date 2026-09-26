@@ -928,7 +928,7 @@ def test_production_case_estimate_stays_below_one_tb():
     assert estimate["degrees_of_freedom"] == 35_977_904
     assert estimate["bulk_frames"] == 600
     assert estimate["interface_frames"] == 99_800
-    assert estimate["estimated_uncompressed_tb"] == pytest.approx(0.532225534836)
+    assert estimate["estimated_uncompressed_tb"] == pytest.approx(0.532227131636)
     assert estimate["bulk_cfl_dt_estimate_s"] == pytest.approx(
         1.2852546070157183e-8
     )
@@ -1027,7 +1027,7 @@ def test_explicit_q4_case_relaxes_only_normal_loading_and_fits_dump_budget():
     assert config.loading.stop_min_y == pytest.approx(440.0)
     assert config.output.bulk_shear_frames == 36_000
     assert config.output.interface_shear_frames == 300_000
-    assert estimate["estimated_uncompressed_tb"] == pytest.approx(1.2525534117)
+    assert estimate["estimated_uncompressed_tb"] == pytest.approx(1.2525582133)
     assert config.output.estimated_compression_ratio == pytest.approx(0.955)
     assert estimate["estimated_uncompressed_tb"] > config.output.maximum_dump_tb
 
@@ -1058,11 +1058,11 @@ def test_ts0118_uses_terminal_ramp_exact_step_and_calibrated_rsf():
         assert zone.characteristic_slip == pytest.approx(RSF_D_c / mm)
     assert config.output.bulk_shear_frames == 36_000
     assert config.output.interface_shear_frames == 300_000
-    assert estimate["estimated_uncompressed_tb"] == pytest.approx(1.2525534117)
+    assert estimate["estimated_uncompressed_tb"] == pytest.approx(1.2525582133)
     assert (
         estimate["estimated_uncompressed_tb"]
         * config.output.estimated_compression_ratio
-    ) == pytest.approx(1.1961885082)
+    ) == pytest.approx(1.1961930937)
 
 
 def test_ts0119_uses_full_fault_stop_coverage_and_ts0116_displacement_margin():

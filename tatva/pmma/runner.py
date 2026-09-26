@@ -118,6 +118,7 @@ def make_run_config(config: PMMACaseConfig) -> RunConfig:
         cfl=numerics.cfl,
         dtype=numerics.dtype,
         operator_batch_size=numerics.operator_batch_size,
+        moving_loading_extension_length=config.moving.loading_extension_length,
         moving_leading_chamfer_along_fault=(
             config.moving.leading_chamfer_along_fault
         ),
