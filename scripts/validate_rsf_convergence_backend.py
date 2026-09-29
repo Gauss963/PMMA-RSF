@@ -4,6 +4,7 @@
 import argparse
 from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -134,6 +135,8 @@ def main():
             args.benchmark_report.parent.mkdir(parents=True, exist_ok=True)
             args.benchmark_report.write_text(json.dumps(report, indent=2) + '\n')
             print(json.dumps(report, indent=2), flush=True)
+            from scripts.convergence_walltime import configure_dependent_job
+            configure_dependent_job(args.benchmark_report, os.environ.get('SLURM_JOB_ID'))
 
 
 if __name__ == '__main__':

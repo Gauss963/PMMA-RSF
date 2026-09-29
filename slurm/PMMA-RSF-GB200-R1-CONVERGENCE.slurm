@@ -17,7 +17,6 @@ set -euo pipefail
 ROOT=${ROOT:-/work/gauss112/tatva}
 ENV_PREFIX=${ENV_PREFIX:-/work/gauss112/.venvs/tatva-gb200}
 export PATH="$ENV_PREFIX/bin:$PATH" PYTHONPATH="$ROOT" PYTHONUNBUFFERED=1
-export RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-82800}
 export MIN_FREE_BYTES=25000000000
 export ANALYSIS_SCRIPT=scripts/analyze_rsf_convergence_sweep.py
 export ANALYSIS_LOG=rsf_convergence_analysis.log
@@ -25,6 +24,11 @@ export RANK_PREFLIGHT_SCRIPT=scripts/validate_rsf_convergence_backend.py
 export ROOT ENV_PREFIX
 unset LD_LIBRARY_PATH || true
 cd "$ROOT"
+if [[ ${PREFLIGHT_ONLY:-0} == 1 ]]; then
+  export RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-82800}
+else
+  export RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-$(python scripts/convergence_walltime.py)}
+fi
 python scripts/preflight_convergence_sweep.py
 if [[ ${PREFLIGHT_ONLY:-0} == 1 ]]; then exit 0; fi
 : "${PILOT_REPORT:?Supply the successful GB200 convergence pilot report}"

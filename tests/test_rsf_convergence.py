@@ -161,3 +161,28 @@ def test_streaming_metrics_exclude_the_triggering_work_increment(tmp_path):
     assert result['post_stop_shear_work'] == 0
     assert result['post_stop_normal_work'] == pytest.approx(1., abs=1e-5)
     assert result['complete_diagnostics']
+
+
+def test_walltime_keeps_margin_and_respects_partition_limit():
+    from scripts.convergence_walltime import recommended_hours
+    assert recommended_hours(11.2) == 16
+    assert recommended_hours(13.4) == 18
+    assert recommended_hours(15.2) == 20
+    assert recommended_hours(18.0) == 24
+    with pytest.raises(ValueError):
+        recommended_hours(20)
+
+
+def test_walltime_only_updates_owned_pilot_dependency(tmp_path, monkeypatch):
+    import json
+    import scripts.convergence_walltime as module
+    report = tmp_path / 'report.json'
+    report.write_text(json.dumps({'predicted_finest_hours': 13.4}))
+    monkeypatch.setattr(module.subprocess, 'check_output', lambda *a, **k:
+                        '101|PENDING|afterok:99(unfulfilled)\n102|PENDING|afterok:999(unfulfilled)\n')
+    commands = []
+    monkeypatch.setattr(module.subprocess, 'run', lambda cmd, **k: commands.append(cmd))
+    module.configure_dependent_job(report, '99')
+    assert commands == [['scontrol', 'update', 'JobId=101', 'TimeLimit=18:00:00']]
+    monkeypatch.setattr(module.subprocess, 'check_output', lambda *a, **k: '1-00:00:00\n')
+    assert module.slurm_budget_seconds('101') == 82800
