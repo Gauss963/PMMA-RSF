@@ -27,6 +27,7 @@ cd "$ROOT"
 if [[ ${SKIP_PILOT:-0} == 1 ]]; then
   : "${HARD_DEADLINE_EPOCH:?Direct launch requires the user-approved absolute deadline}"
   unset PILOT_REPORT
+  unset RANK_PREFLIGHT_SCRIPT
   echo "Direct production launch authorized; no queued timing pilot dependency."
 fi
 if [[ ${PREFLIGHT_ONLY:-0} == 1 ]]; then
