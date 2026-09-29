@@ -52,6 +52,19 @@ window if needed to retain the relevant spike and at least 2 ms thereafter.
 Flag any refined run that does not latch its stop before this cutoff; do
 not silently treat a still-loaded case as a comparable post-stop result.
 
+F1 job 1102618 subsequently completed. The four selected cases' saved
+global-peak times are 7.57158, 7.28753, 7.70838 and 7.33978 ms after shear
+starts, respectively. Thus 12 ms includes these existing peaks. The 6, 28
+and 30 mm peaks occur 10.45, 19.00 and 21.85 us after actuator arrest;
+the zero-extension peak is 2.44532 ms after arrest. Include a separate
+window around that later zero-extension peak, not just the stop window.
+Measure wave travel and contact response around stopping: these short delays
+motivate checking stop-generated transients but do not prove their cause.
+At the 6 and 28 mm peaks, saved strength/coefficient imply local compression
+of approximately 150 and 147 MPa, much larger than the 16 MPa applied load.
+Direct gap/penetration/normal-traction diagnostics and spatial refinement of
+this contact edge are therefore important, not only a smaller dt.
+
 Start each variant from t=0. Current resume validates dt, step counts and
 frame counts; it cannot change dt or mesh, and completed checkpoints are
 removed. A future branch-restart facility would also need to correctly
