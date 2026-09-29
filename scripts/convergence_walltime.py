@@ -38,9 +38,16 @@ def configure_dependent_job(report_path, pilot_id):
         if len(matches) > 1:
             raise RuntimeError('Duplicate convergence submissions; refusing automatic changes')
         for job in matches:
-            subprocess.run(['scontrol', 'update', 'JobId=' + job,
-                            f'TimeLimit={hours}:00:00'], check=True)
             report['production_job_id'] = job
+            try:
+                subprocess.run(['scontrol', 'update', 'JobId=' + job,
+                                f'TimeLimit={hours}:00:00'], check=True)
+            except subprocess.CalledProcessError as exc:
+                # Some clusters disallow scheduler changes from compute nodes.
+                # A rejected reduction must not invalidate a successful pilot
+                # and cancel its dependent job, whose original cap is longer.
+                report['walltime_update_error'] = str(exc)
+                print(f'WARNING: could not reduce job {job} walltime; its existing limit remains.', flush=True)
     path.write_text(json.dumps(report, indent=2) + '\n')
     print(f'Convergence wall limit from measured pilot: {hours} h', flush=True)
 

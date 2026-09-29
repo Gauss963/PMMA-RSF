@@ -20,7 +20,7 @@ export PATH="$ENV_PREFIX/bin:$PATH" PYTHONPATH="$ROOT" PYTHONUNBUFFERED=1
 export MIN_FREE_BYTES=25000000000
 export ANALYSIS_SCRIPT=scripts/analyze_rsf_convergence_sweep.py
 export ANALYSIS_LOG=rsf_convergence_analysis.log
-export RANK_PREFLIGHT_SCRIPT=scripts/validate_rsf_convergence_backend.py
+export RANK_PREFLIGHT_SCRIPT=${RANK_PREFLIGHT_SCRIPT-scripts/validate_rsf_convergence_backend.py}
 export ROOT ENV_PREFIX
 unset LD_LIBRARY_PATH || true
 cd "$ROOT"

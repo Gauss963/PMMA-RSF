@@ -188,3 +188,19 @@ def test_walltime_only_updates_owned_pilot_dependency(tmp_path, monkeypatch):
     assert module.slurm_budget_seconds('101') == 82800
     monkeypatch.setattr(module.time, 'time', lambda: 10000)
     assert module.slurm_budget_seconds('101', 20000) == 8200
+
+
+def test_scheduler_rejection_does_not_invalidate_successful_pilot(tmp_path, monkeypatch):
+    import json
+    import scripts.convergence_walltime as module
+    report = tmp_path / 'report.json'
+    report.write_text(json.dumps({'passed': True, 'predicted_finest_hours': 11.56}))
+    monkeypatch.setattr(module.subprocess, 'check_output', lambda *a, **k:
+                        '101|PENDING|afterok:99(unfulfilled)\n')
+    def rejected(cmd, **kwargs):
+        raise module.subprocess.CalledProcessError(1, cmd)
+    monkeypatch.setattr(module.subprocess, 'run', rejected)
+    module.configure_dependent_job(report, '99')
+    result = json.loads(report.read_text())
+    assert result['passed'] and result['recommended_wall_hours'] == 16
+    assert 'walltime_update_error' in result
