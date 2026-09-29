@@ -1,6 +1,9 @@
 # Proposed short convergence checks after TS0352-TS0367
 
-Proposal only, 2026-09-29. No new simulations submitted.
+Original proposal, 2026-09-29. Subsequently approved for implementation.
+The exact TS0368-TS0383 cases, implemented diagnostics, precision corrections
+and submission record are in `TS0368_TS0383_timestep_convergence.md`.
+The sections below retain the original planning assumptions for traceability.
 
 ## Scope
 

@@ -70,6 +70,14 @@ def validate(directory):
             # number across unrelated units (e.g. velocity vs overlap).
             axes = tuple(range(left.ndim - 1))
             scale = np.maximum(np.max(np.abs(left), axis=axes), np.max(np.abs(right), axis=axes))
+            if field == 'history':
+                names = [v.decode() for v in a['integration_probes/history_columns']]
+                # The signed mean shear traction can nearly cancel across the
+                # interface. Judge its absolute error against the contact
+                # stress scale, not the almost-zero difference of large terms.
+                scale[names.index('avg_tau')] = max(
+                    scale[names.index('avg_tau')], scale[names.index('avg_sigma_n')]
+                )
             error = np.max(np.abs(left - right), axis=axes)
             tolerance = 64 * np.finfo(np.float32).eps * scale + np.finfo(np.float32).tiny
             if not np.all(error <= tolerance):

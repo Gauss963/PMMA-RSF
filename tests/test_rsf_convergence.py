@@ -133,3 +133,31 @@ def test_probe_writer_resume_overwrites_only_after_checkpoint(tmp_path):
         np.testing.assert_array_equal(h5['integration_probes/values'][:4], 1)
         np.testing.assert_array_equal(h5['integration_probes/values'][4:], 2)
         assert writer.group.attrs['saved_steps'] == 10
+
+
+def test_streaming_metrics_exclude_the_triggering_work_increment(tmp_path):
+    import json
+    from scripts.analyze_rsf_convergence_sweep import analyze
+    (tmp_path / 'input').mkdir()
+    (tmp_path / 'data').mkdir()
+    (tmp_path / 'stats').mkdir()
+    (tmp_path / 'input/case.toml').write_text(case_path(16).read_text())
+    columns = ['shear_loading_stopped', 'applied_shear_displacement', 'elastic_energy',
+               'kinetic_energy', 'shear_boundary_reaction', 'normal_external_force',
+               'normal_loading_coordinate']
+    with h5py.File(tmp_path / 'data/simulation.h5', 'w') as h5:
+        h5.attrs['rsf_state_integration_dtype'] = 'float64'
+        writer = IntegrationProbeWriter(h5, [0., .5], 3, 1e-9, 40, columns, 'lzf')
+        values = np.ones((3, 2, 8))
+        values[1, 1, 0] = 8.
+        history = [[0, .5, 10, 1, 100, 1000, .01],
+                   [1, .6, 11, 2, 100, 1000, .02],
+                   [1, .6, 9, 1, 100, 1000, .021]]
+        writer.append(0, np.asarray(history), values, np.ones((3, 2)))
+        writer.flush()
+    result = json.loads(analyze(tmp_path).read_text())
+    assert result['stop']['step'] == 2
+    assert result['loading_end_peak']['y_mm'] == .5
+    assert result['post_stop_shear_work'] == 0
+    assert result['post_stop_normal_work'] == pytest.approx(1., abs=1e-5)
+    assert result['complete_diagnostics']
