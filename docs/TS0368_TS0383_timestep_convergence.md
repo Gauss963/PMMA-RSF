@@ -117,6 +117,34 @@ Completed physical cases exit rather than occupying their GPU with plotting.
 
 ## Submission record
 
+### Current production submission (2026-09-29, 22:51 Taiwan time)
+
+- **Job 457463**, `gb200-r1`, exactly TS0368-TS0383, 16 GPUs, no dependency.
+- Solver/case fingerprint matches the successful numerical/timing portion
+  of pilot 454906: `cb113eb923ad21fbfa7db36d9124457b5a9bfff9b0b9eb1cd101c3663b33a694`.
+- The GPU mixed-precision/checkpoint tests PASSED. Measured full-mesh timing:
+  normal 28.2132 s / 30720 steps; shear 16.0809 s / 12640 steps.
+  Estimated finest-case duration is **11.5561 h**; adding 25% plus 0.5 h
+  gives **14.9452 h**. These remain short-pilot extrapolations, not guarantees.
+- Requested time limit: **16:00:00**. Runner checkpoints after at most
+  15 hours, additionally capped to 30 minutes before the absolute cutoff.
+- User deadline: **2026-10-01 00:00:00 Asia/Taipei**. Slurm scheduling
+  deadline: **2026-09-30 23:50:00**, leaving ten minutes before the cutoff.
+  With a full 16-hour reservation, latest eligible start is September 30
+  at 07:50. Slurm may remove a job that can no longer finish in this window;
+  neither queue availability nor completion of all physical cases is guaranteed.
+- No additional per-rank pilot is run. The successful report fingerprint,
+  case manifest, storage and one-GPU-per-task checks remain enabled.
+- Pilot 454906's final scheduler-adjustment command was rejected by Slurm,
+  so its batch status was FAILED even though both numerical validation and
+  full-mesh timing had completed successfully. Dependent job 454914 was
+  automatically cancelled without starting. Job 457463 supersedes it.
+  Scheduler-update errors are now recorded separately and do not invalidate
+  a successful numerical pilot.
+- Production code at submission: `358ce72`.
+
+### Earlier preparation
+
 - Code: `1ff8143` (includes solver revision `6d517be` and backend checks).
 - Timing/validation pilot: **454906**, `gb200-dev`, one GPU, 2-hour ceiling.
 - Production: **454914**, `gb200-r1`, four nodes / 16 GPUs, exactly one
