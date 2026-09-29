@@ -105,11 +105,40 @@ sbatch --export=ALL,PILOT_REPORT=/work/gauss112/tatva/stats/convergence_pilot_JO
 ```
 
 The production launcher verifies the pilot solver/case fingerprint, exactly
-16 cases, available storage, and one visible GPU per rank. Its default
-24-hour cap is the partition maximum; set a shorter cap and corresponding
-runner budget only after the pilot timing supports it. The runner always
-leaves checkpoint margin before Slurm termination. Completed physical
-cases exit rather than occupying their GPU with plotting.
+16 cases, available storage, and one visible GPU per rank. The pilot adjusts
+only its own pending dependent production job, using
+`max(16, 2*ceil((1.25*predicted_finest_hours + 0.5)/2))` hours. Thus the
+allowed limits are 16, 18, 20, 22, and 24 hours. A requirement above 24 hours
+fails the pilot gate rather than silently starting an under-budget batch.
+The initial 24-hour request is a conservative placeholder, not a measured
+runtime or a guarantee that 16 hours is sufficient. The runner derives its
+budget from the actual Slurm limit, minus one hour for checkpoint margin.
+Completed physical cases exit rather than occupying their GPU with plotting.
+
+## Submission record
+
+- Code: `1ff8143` (includes solver revision `6d517be` and backend checks).
+- Timing/validation pilot: **454906**, `gb200-dev`, one GPU, 2-hour ceiling.
+- Production: **454914**, `gb200-r1`, four nodes / 16 GPUs, exactly one
+  independent TS case per GPU, dependency `afterok:454906`.
+- At submission both are pending: dev nodes unavailable/reserved, production
+  waiting for dependency. Production initially requests 24 hours, subject to
+  the measured proportional adjustment above. No completed timing estimate
+  is claimed yet.
+- Pilot report: `/work/gauss112/tatva/stats/convergence_pilot_454906.json`.
+- Production outputs: `/work/gauss112/tatva/runs/TS0368` through `TS0383`.
+- Checkpoint interval: 10 minutes; Slurm warning: 30 minutes before timeout.
+- Local regression: 44 tests passed; two additional scheduler-safety tests
+  also passed. CPU normal- and shear-phase restarts agree bitwise.
+- Earlier one-minute pilots 454886 and 454895 stopped on overly strict
+  restart comparison assertions before the full-mesh timing phase. CUDA
+  scatter/reduction roundoff is now compared separately per physical
+  channel; the nearly cancelling signed mean shear traction uses the
+  normal-contact stress scale for its absolute tolerance. Stop flags and
+  actuator displacement still require exact equality. This changes the
+  validation criterion, not the numerical solver. The earlier held
+  production job 454903 was automatically cancelled on dependency failure
+  and consumed no running allocation; it is not a second active sweep.
 
 ## Interpretation limits
 
