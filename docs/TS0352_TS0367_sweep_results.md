@@ -36,6 +36,14 @@ figures were rendered and visually checked locally from the transferred
 metrics and station tables. The supplementary diagnostic job reads scalar
 histories and one high-rate station trace per run, not full bulk stress arrays.
 
+The first runs skipped permanent-drop plots because the last 2 ms window
+starts before the last detected slip arrival. The workflow continues past
+those inapplicable analyses. A misplaced copy of that guard also blocked
+ordinary residual-referenced local traces; it has been fixed and regression
+tested. `scripts/complete_local_stress_traces.py` fills only missing ordinary
+traces after the running suite, without rerunning the whole suite or forcing
+an invalid permanent-drop estimate.
+
 ## Common experiment and control
 
 L_ext = 0, 2, ..., 30 mm. The extension is continuous PMMA below original y=0,

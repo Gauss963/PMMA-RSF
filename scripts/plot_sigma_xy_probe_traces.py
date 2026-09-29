@@ -1216,7 +1216,9 @@ def plot_sigma_xy_probe_traces(
         full_rupture_time_ms = float(np.nanmax(arrival_all))
         post_window_end_ms = shear_end_ms
         post_window_start_ms = post_window_end_ms - post_window_duration_ms
-        if post_window_start_ms <= full_rupture_time_ms:
+        # A local, residual-referenced trace needs no post-full-rupture plateau.
+        # Keep this check for the separate permanent-drop analysis only.
+        if baseline_mode == "pre-event" and post_window_start_ms <= full_rupture_time_ms:
             raise ValueError(
                 "The requested late plateau begins before full-fault rupture."
             )

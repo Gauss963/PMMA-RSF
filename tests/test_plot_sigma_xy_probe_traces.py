@@ -34,3 +34,31 @@ def test_interface_and_positive_off_fault_distances_are_valid():
 def test_invalid_off_fault_distances_are_rejected(distances):
     with pytest.raises(ValueError):
         validate_off_fault_distances(distances)
+
+
+@pytest.mark.parametrize("mode", ["residual", "pre-event"])
+def test_late_plateau_guard_does_not_block_local_trace(tmp_path, monkeypatch, mode):
+    import h5py
+    import plot_sigma_xy_probe_traces as plots
+
+    path = tmp_path / "simulation.h5"
+    with h5py.File(path, "w") as h5:
+        h5["interface/contact_line_y"] = [0., 100., 200.]
+        h5["interface/cumulative_slip"] = np.zeros((6, 3))
+    monkeypatch.setattr(plots, "configure_style", lambda: None)
+    monkeypatch.setattr(plots, "saved_time_ms", lambda h5: (np.arange(6.), np.arange(6)))
+    monkeypatch.setattr(plots, "_critical_slip_profile", lambda h5, y: np.ones(3))
+    monkeypatch.setattr(plots, "first_crossing_times", lambda *a, **k: np.array([1., 2., 4.]))
+    monkeypatch.setattr(plots, "_select_dense_and_tail_frames", lambda *a: (np.arange(6), 6))
+
+    class ReachedProbeSelection(Exception):
+        pass
+
+    def reached(*args):
+        raise ReachedProbeSelection
+
+    monkeypatch.setattr(plots, "choose_probe_patches", reached)
+    error = ReachedProbeSelection if mode == "residual" else ValueError
+    with pytest.raises(error):
+        plots.plot_sigma_xy_probe_traces(path, tmp_path / "trace.png", None,
+                                        y_points=[100.], baseline_mode=mode)
