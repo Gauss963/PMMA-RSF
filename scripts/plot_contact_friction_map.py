@@ -17,7 +17,6 @@ from plot_rupture_speed_and_fault_profile import material_wave_speeds
 from plot_rsf_rupture_analysis import optional_linear_arrival_fit
 
 
-MU_COLOR_FLOOR = 0.6
 RUPTURE_FIT_START_MM = 200.0
 RUPTURE_SLIP_FRACTION = 1.0
 RUPTURE_ARRIVAL_SPATIAL_MEDIAN_MM = 10.0
@@ -29,9 +28,17 @@ _DEFAULT_MATERIAL = {
 
 
 def _effective_friction_colormap():
-    cmap = matplotlib.colormaps["viridis"].copy()
-    cmap.set_under("black")
-    return cmap
+    return matplotlib.colormaps["viridis"].copy()
+
+
+def _automatic_mu_norm(mu_eff: np.ndarray) -> matplotlib.colors.Normalize:
+    """Share the full finite data range between normal and shear panels."""
+    values = np.ma.masked_invalid(mu_eff)
+    if values.count() == 0:
+        raise ValueError("No finite effective-friction values to plot.")
+    norm = matplotlib.colors.Normalize()
+    norm.autoscale(values)
+    return norm
 
 
 def _read_wave_speeds(input_path: Path, h5: h5py.File) -> dict[str, float]:
@@ -412,9 +419,7 @@ def plot_mu_eff_maps(
             - (mu_s_sorted[None, :] - mu_k_sorted[None, :])
             * np.minimum(cum_sorted / d_c, 1.0),
         )
-    mu_plot_min = float(np.nanmin(mu_eff))
-    mu_plot_max = float(np.nanmax(mu_eff))
-    mu_display_max = max(mu_plot_max, MU_COLOR_FLOOR + 1.0e-6)
+    mu_norm = _automatic_mu_norm(mu_eff)
     friction_cmap = _effective_friction_colormap()
 
     normal_idx = np.where(phase_id == 1)[0]
@@ -426,12 +431,11 @@ def plot_mu_eff_maps(
         time_edges,
         mu_eff,
         cmap=friction_cmap,
-        vmin=MU_COLOR_FLOOR,
-        vmax=mu_display_max,
+        norm=mu_norm,
         shading="auto",
         rasterized=True,
     )
-    cbar = fig.colorbar(im, ax=ax, pad=0.02, extend="min")
+    cbar = fig.colorbar(im, ax=ax, pad=0.02)
     cbar.set_label("Effective friction coefficient")
 
     if normal_end_idx is not None:
@@ -495,8 +499,7 @@ def plot_mu_eff_maps(
         shear_time_edges,
         mu_eff[shear_mask],
         cmap=friction_cmap,
-        vmin=MU_COLOR_FLOOR,
-        vmax=mu_display_max,
+        norm=mu_norm,
         shading="auto",
         rasterized=True,
     )
@@ -508,8 +511,7 @@ def plot_mu_eff_maps(
         normal_time_edges,
         mu_eff[normal_mask],
         cmap=friction_cmap,
-        vmin=MU_COLOR_FLOOR,
-        vmax=mu_display_max,
+        norm=mu_norm,
         shading="auto",
         rasterized=True,
     )
@@ -533,7 +535,7 @@ def plot_mu_eff_maps(
         wave_speeds,
     )
 
-    cbar = fig.colorbar(normal_im, cax=cax, extend="min")
+    cbar = fig.colorbar(normal_im, cax=cax)
     cbar.set_label("Effective friction coefficient")
     phase_split_png_path = _save_with_png(fig, phase_split_output_path)
     plt.close(fig)
@@ -543,7 +545,10 @@ def plot_mu_eff_maps(
         "output_png": str(output_png_path),
         "phase_split_output": str(phase_split_output_path),
         "phase_split_output_png": str(phase_split_png_path),
-        "mu_color_floor": MU_COLOR_FLOOR,
+        "mu_color_mode": "auto",
+        "mu_color_floor": None,
+        "mu_color_min": float(mu_norm.vmin),
+        "mu_color_max": float(mu_norm.vmax),
         "rayleigh_wave_speed_m_per_s": wave_speeds["c_r"],
         "rayleigh_80_percent_speed_m_per_s": 0.8 * wave_speeds["c_r"],
         "rayleigh_50_percent_speed_m_per_s": 0.5 * wave_speeds["c_r"],

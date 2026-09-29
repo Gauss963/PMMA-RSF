@@ -11,7 +11,7 @@ PLOT_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(PLOT_DIR))
 
 from plot_contact_friction_map import (  # noqa: E402
-    MU_COLOR_FLOOR,
+    _automatic_mu_norm,
     _add_rupture_speed_fit,
     _add_wave_speed_guides,
     _effective_friction_colormap,
@@ -220,7 +220,10 @@ def test_contact_plots_use_saved_rsf_coefficient(tmp_path):
     path_stats = plot_contact_mu_disp(input_path, tmp_path / "path.pdf")
 
     assert map_stats["mu_min_final"] == pytest.approx(0.32)
-    assert map_stats["mu_color_floor"] == pytest.approx(0.6)
+    assert map_stats["mu_color_mode"] == "auto"
+    assert map_stats["mu_color_floor"] is None
+    assert map_stats["mu_color_min"] == pytest.approx(0.30)
+    assert map_stats["mu_color_max"] == pytest.approx(0.33)
     assert map_stats["rayleigh_wave_speed_m_per_s"] == pytest.approx(1519.1859)
     assert map_stats["rayleigh_80_percent_speed_m_per_s"] == pytest.approx(
         0.8 * 1519.1859
@@ -237,11 +240,30 @@ def test_contact_plots_use_saved_rsf_coefficient(tmp_path):
     assert (tmp_path / "path.pdf").exists()
 
 
-def test_effective_friction_colormap_marks_values_below_floor_black():
+def test_effective_friction_colormap_uses_full_automatic_range():
     cmap = _effective_friction_colormap()
+    norm = _automatic_mu_norm(np.array([[0.1, 0.3], [0.45, 0.8]]))
 
-    assert MU_COLOR_FLOOR == pytest.approx(0.6)
-    np.testing.assert_allclose(cmap(-0.1), (0.0, 0.0, 0.0, 1.0))
+    assert norm.vmin == pytest.approx(0.1)
+    assert norm.vmax == pytest.approx(0.8)
+    assert norm(0.3) < norm(0.45)
+    np.testing.assert_allclose(cmap(-0.1), cmap(0.0))
+    assert not np.allclose(cmap(norm(0.3)), (0.0, 0.0, 0.0, 1.0))
+
+
+def test_automatic_mu_norm_ignores_nonfinite_values():
+    norm = _automatic_mu_norm(np.array([np.nan, -np.inf, 0.2, 0.4, np.inf]))
+    assert (norm.vmin, norm.vmax) == pytest.approx((0.2, 0.4))
+
+
+def test_automatic_mu_norm_rejects_entirely_invalid_data():
+    with pytest.raises(ValueError, match="No finite"):
+        _automatic_mu_norm(np.array([np.nan, np.inf]))
+
+
+def test_automatic_mu_norm_preserves_constant_data_for_matplotlib():
+    norm = _automatic_mu_norm(np.full((2, 3), 0.4))
+    assert (norm.vmin, norm.vmax) == pytest.approx((0.4, 0.4))
 
 
 def test_wave_speed_ruler_uses_common_origin_and_physical_travel_times():
