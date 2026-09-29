@@ -1510,7 +1510,7 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
     shear_ramp_time = (
         case.simulation.rise_fraction * shear_time
         if config.shear_ramp_time is None
-        else min(max(float(config.shear_ramp_time), 0.0), shear_time)
+        else max(float(config.shear_ramp_time), 0.0)
     )
     shear_ramp_steps = (
         min(shear_steps, int(math.ceil(shear_ramp_time / dt)))
@@ -1703,10 +1703,10 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
     scalar_dtype = np.float32 if dtype == jnp.float32 else np.float64
     shear_ramp_progress = (
         build_ramp_progress(
-            shear_ramp_steps,
+            int(math.ceil(shear_ramp_time / dt)),
             shape=shear_ramp_shape,
             dtype=scalar_dtype,
-        )
+        )[:shear_ramp_steps]
         if shear_ramp_steps > 0
         else np.zeros(0, dtype=scalar_dtype)
     )
@@ -2842,12 +2842,20 @@ def run_simulation_dumped(
     include_initial_frame: bool = True,
     store_bulk_strain: bool = True,
     store_bulk_velocity: bool = True,
+    rsf_state_dtype: str | None = None,
+    integration_probe_max_y: float | None = None,
     checkpoint_path: Path | None = None,
     checkpoint_interval_seconds: float | None = None,
     checkpoint_deadline_monotonic: float | None = None,
     resume: bool = False,
 ) -> dict[str, Any]:
     import h5py
+    from tatva.pmma.integration_probes import IntegrationProbeWriter
+
+    if rsf_state_dtype not in {None, "float32", "float64"}:
+        raise ValueError("Unsupported RSF state precision.")
+    if rsf_state_dtype == "float64":
+        jax.config.update("jax_enable_x64", True)
 
     checkpoint_path = (
         None if checkpoint_path is None else checkpoint_path.expanduser().resolve()
@@ -2872,7 +2880,13 @@ def run_simulation_dumped(
         for signum, handler in previous_signal_handlers.items():
             signal.signal(signum, handler)
 
-    model = build_case_model(case, config)
+    # Quadrature constants must not promote the bulk operator merely because
+    # the tiny interface state vector uses double precision.
+    if rsf_state_dtype is not None:
+        with jax.enable_x64(config.dtype == "float64"):
+            model = build_case_model(case, config)
+    else:
+        model = build_case_model(case, config)
 
     dtype = model["dtype"]
     moving = model["moving"]
@@ -2904,6 +2918,21 @@ def run_simulation_dumped(
     use_regularized_rate_state = (
         model["friction_law"] == "rate-state-regularized"
     )
+    state_dtype = jnp.dtype(rsf_state_dtype or config.dtype)
+    probe_indices = None
+    if integration_probe_max_y is not None:
+        if not use_regularized_rate_state or config.rsf_initial_state_mode != "steady-state":
+            raise ValueError("Integration probes require continuous regularized RSF.")
+        if config.time_step_override is None or not math.isclose(
+            float(model["dt"]), config.time_step_override, rel_tol=1e-12
+        ):
+            raise ValueError("Integration probe capacity requires the configured dt to be accepted unchanged.")
+        contact_y = np.asarray(moving.mesh.coords[master_nodes, 1])
+        selected = (contact_y >= case.moving.origin[1]) & (contact_y <= integration_probe_max_y)
+        if not np.any(selected):
+            raise ValueError("No interface nodes in the requested integration probe interval.")
+        probe_indices = jnp.asarray(np.flatnonzero(selected), dtype=jnp.int32)
+        probe_y = contact_y[selected]
     rsf_parameters = {
         name: jnp.broadcast_to(jnp.asarray(value, dtype=dtype), master_nodes.shape)
         for name, value in model["rsf_parameters"].items()
@@ -3083,7 +3112,7 @@ def run_simulation_dumped(
         corrected_velocity, strength = project_regularized_rate_state_velocity(
             free_relative_velocity,
             normal_traction,
-            rsf_state,
+            rsf_state.astype(dtype),
             jnp.where(active, relative_impulse_factor, 0.0),
             reference_friction=rsf_parameters["reference_friction"],
             direct_effect=rsf_parameters["direct_effect"],
@@ -3108,7 +3137,8 @@ def run_simulation_dumped(
             strength / jnp.maximum(normal_traction, jnp.finfo(dtype).tiny),
             0.0,
         )
-        signed_strength = jnp.sign(corrected_velocity) * strength
+        # Velocity may underflow to zero while the resisting impulse is finite.
+        signed_strength = jnp.sign(free_relative_velocity) * strength
         return projected, corrected_velocity, speed, coefficient, signed_strength
 
     def contact_response(
@@ -3153,7 +3183,7 @@ def run_simulation_dumped(
             friction_strength = regularized_rate_state_strength(
                 friction_velocity,
                 normal_traction,
-                new_rsf_state,
+                new_rsf_state.astype(dtype),
                 reference_friction=rsf_parameters["reference_friction"],
                 direct_effect=rsf_parameters["direct_effect"],
                 state_effect=rsf_parameters["state_effect"],
@@ -3364,7 +3394,7 @@ def run_simulation_dumped(
     cum0 = jnp.zeros(master_nodes.shape[0], dtype=dtype)
     rsf_state0 = jnp.broadcast_to(
         rsf_parameters["initial_state"], master_nodes.shape
-    ).astype(dtype)
+    ).astype(state_dtype)
     a0, diag0 = acceleration(
         u0,
         v0,
@@ -3614,6 +3644,18 @@ def run_simulation_dumped(
             applied_shear_displacement,
             loading_stopped_new,
         )
+        if probe_indices is not None and allow_loading_stop:
+            p = probe_indices
+            moving_dofs = moving_iface_y[p]
+            stationary_dofs = stationary_iface_y[p]
+            overlap = u_new[moving_dofs - 1] - u_new[stationary_dofs - 1]
+            probes = jnp.stack((
+                diag["slip_rate"][p], diag["cum_slip"][p], diag["plastic_slip"][p],
+                diag["friction_coefficient"][p], signed_strength[p], overlap,
+                penalty_n * jnp.maximum(overlap, 0.0),
+                v_half_new[moving_dofs] - v_half_new[stationary_dofs],
+            ), axis=-1).astype(dtype)
+            output = (output, probes, diag["rsf_state"][p])
         return (
             u_new,
             v_half_new,
@@ -3771,6 +3813,7 @@ def run_simulation_dumped(
         return updated, values, state
 
     chunk_runners: dict[tuple[str, int], Any] = {}
+    chunk_timings = {phase: {"seconds": 0.0, "steps": 0} for phase in ("normal", "shear")}
 
     def advance_chunk(
         carry: tuple[jax.Array, ...],
@@ -4081,6 +4124,8 @@ def run_simulation_dumped(
         ):
             raise ValueError("Checkpoint dt does not match the current case.")
         carry = tuple(jnp.asarray(value) for value in checkpoint_carry)
+        if carry[4].dtype != state_dtype:
+            raise ValueError("Checkpoint RSF state precision does not match the case.")
         frame_count = int(checkpoint_metadata["frame_count"])
         interface_frame_count = int(checkpoint_metadata["interface_frame_count"])
         resume_phase_id = int(checkpoint_metadata["phase_id"])
@@ -4564,6 +4609,15 @@ def run_simulation_dumped(
             frame_count = 0
             interface_frame_count = 0
 
+        probe_writer = None
+        if probe_indices is not None:
+            probe_writer = IntegrationProbeWriter(
+                h5, probe_y, int(model["shear_steps"]), dt, model["pressure_steps"],
+                history_columns, compression,
+                resume_step=(resume_step_id if resume_phase_id == 2 else 0) if resume else None,
+            )
+        h5.attrs["rsf_state_integration_dtype"] = str(state_dtype)
+
         def save_checkpoint(
             phase_id: int,
             step_id: int,
@@ -4572,6 +4626,9 @@ def run_simulation_dumped(
             nonlocal last_checkpoint_time
             if checkpoint_path is None:
                 return
+            if probe_writer is not None:
+                probe_writer.flush()
+            h5.attrs["steady_chunk_timings_json"] = json.dumps(chunk_timings)
             h5.flush()
             metadata = {
                 "version": 1,
@@ -4668,6 +4725,8 @@ def run_simulation_dumped(
             for stop in simulation_stops:
                 stop = int(stop)
                 chunk = jnp.asarray(schedule_np[prev_stop:stop], dtype=dtype)
+                timed_chunk = (phase_label, stop - prev_stop) in chunk_runners
+                chunk_started = time.monotonic()
                 carry, outputs = advance_chunk(
                     carry,
                     chunk,
@@ -4675,7 +4734,15 @@ def run_simulation_dumped(
                     prescribed_dofs,
                     phase_label,
                 )
-                row = np.asarray(outputs[-1])
+                if probe_writer is not None and phase_id == 2:
+                    rows, probes, states = jax.device_get(outputs)
+                    # Do not use the float32 accumulated carry time as a clock.
+                    rows = np.array(rows, copy=True)
+                    rows[:, 0] = (model["pressure_steps"] + np.arange(prev_stop + 1, stop + 1)) * dt
+                    probe_writer.append(prev_stop, rows, probes, states)
+                    row = rows[-1]
+                else:
+                    row = np.asarray(outputs[-1])
                 if separate_interface_output and stop in interface_stop_set:
                     save_high_rate_interface(
                         h5,
@@ -4696,6 +4763,9 @@ def run_simulation_dumped(
                         step_id=stop,
                     )
                     frame_count += 1
+                if timed_chunk:
+                    chunk_timings[phase_label]["seconds"] += time.monotonic() - chunk_started
+                    chunk_timings[phase_label]["steps"] += stop - prev_stop
                 prev_stop = stop
                 now = time.monotonic()
                 interval_due = (
@@ -4804,6 +4874,9 @@ def run_simulation_dumped(
                         f"{checkpoint_path}"
                     )
 
+        if probe_writer is not None:
+            probe_writer.flush()
+        h5.attrs["steady_chunk_timings_json"] = json.dumps(chunk_timings)
         h5.attrs["saved_frames"] = frame_count
         h5.attrs["saved_interface_frames"] = (
             interface_frame_count if separate_interface_output else frame_count

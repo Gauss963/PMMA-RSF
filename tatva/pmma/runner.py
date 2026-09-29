@@ -400,6 +400,8 @@ def run_case(
             include_initial_frame=config.output.include_initial_frame,
             store_bulk_strain=config.output.store_bulk_strain,
             store_bulk_velocity=config.output.store_bulk_velocity,
+            rsf_state_dtype=config.numerics.rsf_state_dtype,
+            integration_probe_max_y=config.output.integration_probe_max_y,
             checkpoint_path=run_dir / "checkpoint.npz",
             checkpoint_interval_seconds=(
                 60.0 * config.output.checkpoint_interval_minutes

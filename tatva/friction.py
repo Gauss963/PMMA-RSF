@@ -75,7 +75,10 @@ def update_ageing_state(
     exact constant-rate update instead of forward Euler keeps the state
     positive for time steps that span a large fraction of ``D / |V|``.
     """
-    velocity = jnp.abs(slip_rate)
+    # Accumulate ageing in the state's precision, even with float32 mechanics.
+    velocity = jnp.abs(jnp.asarray(slip_rate, dtype=state.dtype))
+    dt = jnp.asarray(dt, dtype=state.dtype)
+    characteristic_slip = jnp.asarray(characteristic_slip, dtype=state.dtype)
     step_slip = velocity * dt / characteristic_slip
     decay = jnp.exp(-step_slip)
     safe_step_slip = jnp.maximum(step_slip, jnp.finfo(state.dtype).eps)

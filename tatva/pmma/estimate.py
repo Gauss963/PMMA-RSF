@@ -90,6 +90,18 @@ def estimate_case_size(config: PMMACaseConfig) -> dict[str, Any]:
         + interface_frames * bytes_per_interface_frame
         + geometry_bytes
     )
+    probe_bytes = 0
+    probe_nodes = 0
+    if config.output.integration_probe_max_y is not None:
+        from tatva.pmma.integration_probes import PROBE_COLUMNS
+        length = min(active_fault_length,
+                     config.output.integration_probe_max_y - config.moving.origin[1])
+        probe_nodes = min(fault_nodes, math.ceil(length / mesh_size) + 1)
+        steps = math.ceil(config.loading.shear_phase_time / config.numerics.time_step)
+        # Float32 node channels and history, float64 theta. Include one chunk
+        # of padding per dataset; HDF5 allocates whole chunks at the final row.
+        probe_bytes = (steps + 4096) * (probe_nodes * (4 * len(PROBE_COLUMNS) + 8) + 17 * 4)
+        estimated_bytes += probe_bytes
     tpv102_dof_ratio = 2 * nodes / TPV102_REFERENCE_DOFS
     equal_dof_mesh_estimate = mesh_size * tpv102_dof_ratio**0.5
     equal_dof_dump_estimate = estimated_bytes / max(tpv102_dof_ratio, 1.0e-12)
@@ -144,6 +156,8 @@ def estimate_case_size(config: PMMACaseConfig) -> dict[str, Any]:
         "store_bulk_strain": config.output.store_bulk_strain,
         "store_bulk_velocity": config.output.store_bulk_velocity,
         "estimated_uncompressed_bytes": estimated_bytes,
+        "integration_probe_nodes": probe_nodes,
+        "integration_probe_bytes": probe_bytes,
         "estimated_uncompressed_gb": estimated_bytes / 1.0e9,
         "estimated_uncompressed_tb": estimated_bytes / 1.0e12,
         "equal_dof_dump_estimate_tb": equal_dof_dump_estimate / 1.0e12,

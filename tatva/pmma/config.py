@@ -72,6 +72,7 @@ class NumericsConfig:
     normal_penalty: float | None = None
     tangential_penalty: float | None = None
     contact_safety_factor: float = 0.25
+    rsf_state_dtype: str | None = None
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,7 @@ class OutputConfig:
     checkpoint_interval_minutes: float
     store_bulk_strain: bool = True
     store_bulk_velocity: bool = True
+    integration_probe_max_y: float | None = None
 
 
 @dataclass(frozen=True)
@@ -280,6 +282,7 @@ def load_case_config(path: str | Path) -> PMMACaseConfig:
             mesh_size=float(numerics["mesh_size"]),
             cfl=float(numerics["cfl"]),
             dtype=str(numerics["dtype"]),
+            rsf_state_dtype=numerics.get("rsf_state_dtype"),
             time_step=(
                 None
                 if "time_step" not in numerics
@@ -320,6 +323,10 @@ def load_case_config(path: str | Path) -> PMMACaseConfig:
             ),
             store_bulk_strain=bool(output.get("store_bulk_strain", True)),
             store_bulk_velocity=bool(output.get("store_bulk_velocity", True)),
+            integration_probe_max_y=(
+                float(output["integration_probe_max_y"])
+                if "integration_probe_max_y" in output else None
+            ),
         ),
         rsf=RSFConfig(
             initial_friction=float(rsf["initial_friction"]),
@@ -405,6 +412,16 @@ def _validate(config: PMMACaseConfig) -> None:
         )
     if config.numerics.dtype not in {"float32", "float64"}:
         raise ValueError("numerics.dtype must be float32 or float64.")
+    if config.numerics.rsf_state_dtype not in {None, "float32", "float64"}:
+        raise ValueError("numerics.rsf_state_dtype must be float32 or float64.")
+    probe_y = config.output.integration_probe_max_y
+    if probe_y is not None:
+        if not math.isfinite(probe_y) or probe_y < config.moving.origin[1]:
+            raise ValueError("integration_probe_max_y must include the original loading end.")
+        if config.numerics.time_step is None:
+            raise ValueError("Integration probes require an explicit time_step for capacity checks.")
+        if config.rsf.initial_state_mode != "steady-state":
+            raise ValueError("Integration probes currently require continuous steady-state initialization.")
     if (
         config.numerics.operator_batch_size is not None
         and config.numerics.operator_batch_size <= 0
@@ -432,8 +449,9 @@ def _validate(config: PMMACaseConfig) -> None:
         raise ValueError("output.maximum_dump_tb must be positive.")
     if config.output.checkpoint_interval_minutes <= 0.0:
         raise ValueError("output.checkpoint_interval_minutes must be positive.")
-    if config.loading.shear_ramp_time > config.loading.shear_phase_time:
-        raise ValueError("shear_ramp_time cannot exceed shear_phase_time.")
+    # A short diagnostic may observe only a prefix of the prescribed ramp.
+    if config.loading.shear_ramp_time < 0.0:
+        raise ValueError("shear_ramp_time cannot be negative.")
     if config.loading.normal_ramp_time > config.loading.normal_phase_time:
         raise ValueError("normal_ramp_time cannot exceed normal_phase_time.")
     if config.loading.normal_loading_mode not in {"displacement", "stress"}:
