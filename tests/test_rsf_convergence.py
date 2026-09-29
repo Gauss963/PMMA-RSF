@@ -186,3 +186,5 @@ def test_walltime_only_updates_owned_pilot_dependency(tmp_path, monkeypatch):
     assert commands == [['scontrol', 'update', 'JobId=101', 'TimeLimit=18:00:00']]
     monkeypatch.setattr(module.subprocess, 'check_output', lambda *a, **k: '1-00:00:00\n')
     assert module.slurm_budget_seconds('101') == 82800
+    monkeypatch.setattr(module.time, 'time', lambda: 10000)
+    assert module.slurm_budget_seconds('101', 20000) == 8200

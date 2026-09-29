@@ -24,6 +24,11 @@ export RANK_PREFLIGHT_SCRIPT=scripts/validate_rsf_convergence_backend.py
 export ROOT ENV_PREFIX
 unset LD_LIBRARY_PATH || true
 cd "$ROOT"
+if [[ ${SKIP_PILOT:-0} == 1 ]]; then
+  : "${HARD_DEADLINE_EPOCH:?Direct launch requires the user-approved absolute deadline}"
+  unset PILOT_REPORT
+  echo "Direct production launch authorized; no queued timing pilot dependency."
+fi
 if [[ ${PREFLIGHT_ONLY:-0} == 1 ]]; then
   export RUN_TIME_LIMIT_SECONDS=${RUN_TIME_LIMIT_SECONDS:-82800}
 else
@@ -31,7 +36,9 @@ else
 fi
 python scripts/preflight_convergence_sweep.py
 if [[ ${PREFLIGHT_ONLY:-0} == 1 ]]; then exit 0; fi
-: "${PILOT_REPORT:?Supply the successful GB200 convergence pilot report}"
+if [[ ${SKIP_PILOT:-0} != 1 ]]; then
+  : "${PILOT_REPORT:?Supply the successful GB200 convergence pilot report}"
+fi
 echo "Convergence sweep ${SLURM_JOB_ID}, code $(git rev-parse HEAD), $(date -Is)"
 set +e
 srun --exact --mpi=none --kill-on-bad-exit=0 --wait=0 \

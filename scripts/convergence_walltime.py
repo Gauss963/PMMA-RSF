@@ -6,6 +6,7 @@ import math
 from pathlib import Path
 import re
 import subprocess
+import time
 
 
 def recommended_hours(predicted_hours):
@@ -44,7 +45,7 @@ def configure_dependent_job(report_path, pilot_id):
     print(f'Convergence wall limit from measured pilot: {hours} h', flush=True)
 
 
-def slurm_budget_seconds(job_id):
+def slurm_budget_seconds(job_id, deadline_epoch=None):
     limit = subprocess.check_output(['squeue', '--noheader', '--jobs=' + job_id,
                                      '--format=%l'], text=True).strip()
     days, clock = limit.split('-', 1) if '-' in limit else ('0', limit)
@@ -53,6 +54,10 @@ def slurm_budget_seconds(job_id):
         parts.insert(0, 0)
     hours, minutes, seconds = parts
     budget = int(days) * 86400 + hours * 3600 + minutes * 60 + seconds - 3600
+    if deadline_epoch is not None:
+        # Leave 30 minutes to flush state, finish small stats, and exit before
+        # the user's absolute cutoff even if scheduler conditions change.
+        budget = min(budget, int(float(deadline_epoch) - time.time() - 1800))
     if budget < 3600:
         raise ValueError('Insufficient Slurm time for production and checkpoint margin')
     return budget
@@ -60,4 +65,4 @@ def slurm_budget_seconds(job_id):
 
 if __name__ == '__main__':
     import os
-    print(slurm_budget_seconds(os.environ['SLURM_JOB_ID']))
+    print(slurm_budget_seconds(os.environ['SLURM_JOB_ID'], os.environ.get('HARD_DEADLINE_EPOCH')))
