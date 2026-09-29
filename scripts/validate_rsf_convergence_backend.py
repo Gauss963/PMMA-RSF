@@ -61,13 +61,30 @@ def validate(directory):
         assert cp['carry_4'].dtype == np.float64
     execute(small, resumed, checkpoint_path=checkpoint, resume=True)
     with h5py.File(fresh) as a, h5py.File(resumed) as b:
+        roundoff = {}
         for field in ('values', 'state', 'history'):
-            np.testing.assert_array_equal(a['integration_probes/' + field], b['integration_probes/' + field])
+            left = np.asarray(a['integration_probes/' + field])
+            right = np.asarray(b['integration_probes/' + field])
+            # GPU scatter/reduction order need not be bitwise reproducible.
+            # Scale each physical channel separately, not by the largest
+            # number across unrelated units (e.g. velocity vs overlap).
+            axes = tuple(range(left.ndim - 1))
+            scale = np.maximum(np.max(np.abs(left), axis=axes), np.max(np.abs(right), axis=axes))
+            error = np.max(np.abs(left - right), axis=axes)
+            tolerance = 64 * np.finfo(np.float32).eps * scale + np.finfo(np.float32).tiny
+            if not np.all(error <= tolerance):
+                raise AssertionError(f'{field}: restart difference {error} exceeds {tolerance}')
+            roundoff[field] = (error / np.maximum(scale, np.finfo(np.float32).tiny)).tolist()
         g = a['integration_probes']
+        columns = [v.decode() for v in g['history_columns']]
+        for name in ('shear_loading_stopped', 'applied_shear_displacement'):
+            i = columns.index(name)
+            np.testing.assert_array_equal(g['history'][:, i], b['integration_probes/history'][:, i])
         assert g.attrs['saved_steps'] == len(g['history'])
         values = np.asarray(g['values'])
         assert np.isfinite(values).all()
         np.testing.assert_allclose(np.abs(values[:, :, 4]), values[:, :, 3] * values[:, :, 6], atol=1e-5)
+    print('Restart scaled roundoff by channel: ' + json.dumps(roundoff), flush=True)
     print('Mixed-precision RSF, every-step probes and checkpoint regression PASSED', flush=True)
     return cfg
 

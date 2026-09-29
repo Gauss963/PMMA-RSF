@@ -1,4 +1,6 @@
 from dataclasses import replace
+import os
+import signal
 import time
 
 import h5py
@@ -75,19 +77,31 @@ def smoke_run(path, **extra):
 def test_short_observation_does_not_speed_up_loading():
     cfg = tiny_config()
     short = replace(cfg, loading=replace(cfg.loading, shear_phase_time=5e-6))
-    full_model = build_case_model(make_case(cfg), make_run_config(cfg))
-    short_model = build_case_model(make_case(short), make_run_config(short))
+    with jax.enable_x64(False):
+        full_model = build_case_model(make_case(cfg), make_run_config(cfg))
+        short_model = build_case_model(make_case(short), make_run_config(short))
     short_disp = np.asarray(short_model['shear_displacement_shear'])
     np.testing.assert_array_equal(short_disp, full_model['shear_displacement_shear'][:len(short_disp)])
 
 
-def test_probe_simulation_and_checkpoint_resume(tmp_path):
+@pytest.mark.parametrize('checkpoint_phase', ['normal', 'shear'])
+def test_probe_simulation_and_checkpoint_resume(tmp_path, monkeypatch, checkpoint_phase):
     fresh = tmp_path / 'fresh.h5'
     smoke_run(fresh)
     resumed = tmp_path / 'resumed.h5'
     checkpoint = tmp_path / 'checkpoint.npz'
-    with pytest.raises(SimulationCheckpointed):
-        smoke_run(resumed, checkpoint_path=checkpoint, checkpoint_deadline_monotonic=time.monotonic() - 1)
+    kwargs = {}
+    with monkeypatch.context() as patch:
+        if checkpoint_phase == 'normal':
+            kwargs['checkpoint_deadline_monotonic'] = time.monotonic() - 1
+        else:
+            append = IntegrationProbeWriter.append
+            def request_stop(writer, *args):
+                append(writer, *args)
+                os.kill(os.getpid(), signal.SIGUSR1)
+            patch.setattr(IntegrationProbeWriter, 'append', request_stop)
+        with pytest.raises(SimulationCheckpointed):
+            smoke_run(resumed, checkpoint_path=checkpoint, **kwargs)
     with np.load(checkpoint) as cp:
         # Verify that only theta, not the million-node mechanics, is promoted.
         assert cp['carry_0'].dtype == np.float32
