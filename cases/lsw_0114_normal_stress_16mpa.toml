@@ -1,0 +1,73 @@
+# Restore the recorded 0114/0116 LSW configuration, changing only normal BC.
+# The historical 0114 directory said hold1ms, but the actual shear window was 30ms.
+[case]
+name = "lsw-0114-normal-stress-16mpa"
+reference = "Archived 0116 stats/summary.json; archived Disp notebook confirms 0114 equivalence"
+
+[geometry.moving]
+origin = [0.0, 0.0]
+dimensions = [200.0, 500.0]
+
+[geometry.stationary]
+origin = [200.0, 0.0]
+dimensions = [145.0, 550.0]
+
+[material]
+density = 1.148e-9
+young_modulus = 7662.0
+poisson_ratio = 0.2
+
+[friction]
+mu_s = 0.8
+mu_k = 0.45
+d_c = 0.00629795
+
+[solver]
+mesh_size = 1.0
+element_type = "tri3"
+simulation_time = 0.03
+cfl = 0.35
+dtype = "float32"
+normal_penalty = 76620.0
+tangential_penalty = 7662.0
+contact_safety_factor = 0.25
+# Preserve the archived timestep instead of increasing it for CPU performance.
+time_step_override = 1.2492928633545953e-8
+friction_law = "slip-weakening"
+normal_loading_mode = "stress"
+normal_stress_override = 16.0
+normal_displacement_override = 0.691620986687549 # Inactive in stress mode.
+normal_phase_time = 0.04
+normal_ramp_time = 0.02
+shear_loading_mode = "displacement"
+shear_displacement_k_override = 0.0
+shear_displacement_s_override = 1.76
+shear_tau_k_override = 19.0 # Inactive in displacement mode.
+shear_tau_s_override = 19.0
+tau_k_start_fraction_override = 1.0
+tau_k_full_fraction_override = 1.0
+shear_phase_time = 0.03
+shear_ramp_time = 0.01
+shear_ramp_shape = "half-cosine"
+lock_shear_edge_during_normal = true
+relax_tangential_contact_during_normal = false
+stop_shear_loading_on_rupture = true
+shear_loading_stop_min_y = 0.0
+shear_loading_stop_max_y = 440.0
+# Omitted stop_slip means each station uses its local D_c, as in 0114.
+loading_edge_nucleation_length = 120.0
+loading_edge_critical_slip = 0.315
+leading_edge_creep_length = 10.0
+leading_edge_creep_transition_length = 10.0
+leading_edge_creep_mu = 0.8
+leading_edge_creep_mu_k = 0.45
+leading_edge_creep_relaxation_time = 5.0e-5
+
+[output]
+frames_per_phase = 4800
+shear_frames_per_phase = 95000
+include_initial_frame = false
+compression = "lzf"
+store_bulk_strain = true
+store_bulk_velocity = true
+checkpoint_interval_seconds = 600.0

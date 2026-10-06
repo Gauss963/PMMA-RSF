@@ -5,6 +5,7 @@ import math
 import os
 import signal
 import time
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ from tatva.friction import (
     velocity_weakening_strengthening_coefficient,
 )
 from tatva.pmma.profiles import build_rate_state_profile
+from tatva.pmma.mpi import get_mpi_context, partition_operator, make_allreduced_value_and_grad, synchronize_flags
 from tatva.pmma.model import (
     BlockSpec as LegacyBlockSpec,
     FrictionReference as LegacyFriction,
@@ -85,6 +87,7 @@ class RunConfig:
     normal_penalty: float | None
     tangential_penalty: float | None
     contact_safety_factor: float = 0.25
+    element_type: str = "quad4"
     time_step_override: float | None = None
     operator_batch_size: int | None = None
     moving_loading_extension_length: float = 0.0
@@ -443,24 +446,32 @@ def build_block_model(
     *,
     dimension: int,
     thickness: float,
+    element_type: str = "quad4",
     operator_batch_size: int | None = None,
     leading_chamfer_along_fault: float = 0.0,
     leading_chamfer_perpendicular: float = 0.0,
 ) -> BlockModel:
     if dimension == 2:
-        mesh, boundary_nodes, boundary_segments = create_structured_quad_block(
+        if element_type not in {"tri3", "quad4"}:
+            raise ValueError(f"Unsupported 2-D element type: {element_type}")
+        if element_type == "tri3" and (leading_chamfer_along_fault or leading_chamfer_perpendicular):
+            raise ValueError("Chamfered geometry requires quad4 elements.")
+        mesh_factory = create_structured_quad_block if element_type == "quad4" else create_structured_tri_block
+        mesh_kwargs = ({"leading_chamfer_along_fault": leading_chamfer_along_fault,
+                        "leading_chamfer_perpendicular": leading_chamfer_perpendicular}
+                       if element_type == "quad4" else {})
+        mesh, boundary_nodes, boundary_segments = mesh_factory(
             spec,
             mesh_size,
             dtype,
-            leading_chamfer_along_fault=leading_chamfer_along_fault,
-            leading_chamfer_perpendicular=leading_chamfer_perpendicular,
+            **mesh_kwargs,
         )
         batch_size = (
             None
             if operator_batch_size is None
             else min(operator_batch_size, int(mesh.elements.shape[0]))
         )
-        operator = Operator(mesh, Quad4(), batch_size=batch_size)
+        operator = Operator(mesh, Quad4() if element_type == "quad4" else Tri3(), batch_size=batch_size)
         plot_elements = mesh.elements
         plot_parent_elements = jnp.arange(mesh.elements.shape[0], dtype=jnp.int32)
     elif dimension == 3:
@@ -1033,6 +1044,7 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         dtype,
         dimension=dimension,
         thickness=config.thickness,
+        element_type=config.element_type,
         operator_batch_size=config.operator_batch_size,
         leading_chamfer_along_fault=(
             config.moving_leading_chamfer_along_fault
@@ -1047,6 +1059,7 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         dtype,
         dimension=dimension,
         thickness=config.thickness,
+        element_type=config.element_type,
         operator_batch_size=config.operator_batch_size,
     )
 
@@ -2852,6 +2865,12 @@ def run_simulation_dumped(
     import h5py
     from tatva.pmma.integration_probes import IntegrationProbeWriter
 
+    mpi_context = get_mpi_context()
+    if mpi_context.enabled and (config.friction_law != "slip-weakening" or config.normal_relaxation_time is not None or config.quasistatic_shear_fraction > 0):
+        raise ValueError("This MPI entry point supports undamped explicit LSW only.")
+    if mpi_context.enabled and integration_probe_max_y is not None:
+        raise ValueError("MPI integration probes are not supported yet.")
+
     if rsf_state_dtype not in {None, "float32", "float64"}:
         raise ValueError("Unsupported RSF state precision.")
     if rsf_state_dtype == "float64":
@@ -3053,21 +3072,24 @@ def run_simulation_dumped(
 
     moving_integration_weights = moving.operator.get_integration_weights()
     stationary_integration_weights = stationary.operator.get_integration_weights()
-    extension_elements = jnp.mean(moving.mesh.coords[moving.mesh.elements, 1], axis=1) < case.moving.origin[1]
+    moving_energy_operator = partition_operator(moving.operator, mpi_context)
+    stationary_energy_operator = partition_operator(stationary.operator, mpi_context)
+    energy_weights = moving_energy_operator.get_integration_weights()
+    extension_elements = jnp.mean(moving_energy_operator.mesh.coords[moving_energy_operator.mesh.elements, 1], axis=1) < case.moving.origin[1]
     normal_force_weights = force_normal[moving_normal_edge_dofs]
     normal_force_total = jnp.sum(normal_force_weights)
 
     def elastic_energy_with_extension(u_flat: jax.Array) -> tuple[jax.Array, jax.Array]:
         u_moving, u_stationary = split_u(u_flat)
-        eps_moving = compute_strain(moving.operator.grad(u_moving))
-        eps_stationary = compute_strain(stationary.operator.grad(u_stationary))
+        eps_moving = compute_strain(moving_energy_operator.grad(u_moving))
+        eps_stationary = compute_strain(stationary_energy_operator.grad(u_stationary))
         moving_density = (
             moving_material.mu * jnp.einsum("...ij,...ij->...", eps_moving, eps_moving)
             + 0.5
             * moving_material.lmbda
             * jnp.trace(eps_moving, axis1=-2, axis2=-1) ** 2
         )
-        total = moving.operator.integrate(moving_density) + stationary.operator.integrate(
+        total = moving_energy_operator.integrate(moving_density) + stationary_energy_operator.integrate(
             stationary_material.mu
             * jnp.einsum("...ij,...ij->...", eps_stationary, eps_stationary)
             + 0.5
@@ -3075,12 +3097,12 @@ def run_simulation_dumped(
             * jnp.trace(eps_stationary, axis1=-2, axis2=-1) ** 2
         )
         extension_energy = (
-            jnp.sum(moving_density * moving_integration_weights * extension_elements[:, None])
+            jnp.sum(moving_density * energy_weights * extension_elements[:, None])
             if config.moving_loading_extension_length > 0.0 else jnp.asarray(0.0, dtype=dtype)
         )
         return total, extension_energy
 
-    elastic_energy_and_force = jax.jit(jax.value_and_grad(elastic_energy_with_extension, has_aux=True))
+    elastic_energy_and_force = make_allreduced_value_and_grad(elastic_energy_with_extension, mpi_context)
 
     total_interface_length = jnp.sum(interface_weights)
     moving_iface_x = dimension * master_nodes
@@ -3952,6 +3974,8 @@ def run_simulation_dumped(
         phase_id: int,
         step_id: int,
     ) -> None:
+        if not mpi_context.is_root:
+            return
         (
             u_flat,
             v_half,
@@ -4035,6 +4059,8 @@ def run_simulation_dumped(
         phase_id: int,
         step_id: int,
     ) -> None:
+        if not mpi_context.is_root:
+            return
         (
             _u_flat,
             _v_half,
@@ -4133,450 +4159,456 @@ def run_simulation_dumped(
 
         # Temporarily move the existing datasets aside so the common metadata
         # initialization path can run without reallocating or copying old frames.
-        with h5py.File(data_path, "r+") as existing_h5:
-            if "_resume_stash" in existing_h5:
-                for name in list(existing_h5.keys()):
-                    if name != "_resume_stash":
-                        del existing_h5[name]
-                stash = existing_h5["_resume_stash"]
-                for name in list(stash.keys()):
-                    existing_h5.move(f"_resume_stash/{name}", name)
-                del existing_h5["_resume_stash"]
-            root_names = list(existing_h5.keys())
-            existing_h5.create_group("_resume_stash")
-            for name in root_names:
-                existing_h5.move(name, f"_resume_stash/{name}")
-            existing_h5.flush()
+        if mpi_context.is_root:
+            with h5py.File(data_path, "r+") as existing_h5:
+                if "_resume_stash" in existing_h5:
+                    for name in list(existing_h5.keys()):
+                        if name != "_resume_stash":
+                            del existing_h5[name]
+                    stash = existing_h5["_resume_stash"]
+                    for name in list(stash.keys()):
+                        existing_h5.move(f"_resume_stash/{name}", name)
+                    del existing_h5["_resume_stash"]
+                root_names = list(existing_h5.keys())
+                existing_h5.create_group("_resume_stash")
+                for name in root_names:
+                    existing_h5.move(name, f"_resume_stash/{name}")
+                existing_h5.flush()
 
     last_checkpoint_time = time.monotonic()
-    with h5py.File(data_path, "r+" if resume else "w") as h5:
-        h5.attrs["backend"] = jax.default_backend()
-        h5.attrs["cfl"] = model["cfl"]
-        h5.attrs["contact_safety_factor"] = model["contact_safety_factor"]
-        if model["time_step_override"] is not None:
-            h5.attrs["time_step_override"] = model["time_step_override"]
-        h5.attrs["dt"] = dt
-        h5.attrs["dt_stable_limit"] = model["dt_stable_limit"]
-        h5.attrs["dt_bulk"] = model["dt_bulk"]
-        h5.attrs["dt_contact"] = model["dt_contact"]
-        h5.attrs["dt_stability_limiter"] = model["dt_stability_limiter"]
-        h5.attrs["dt_limiter"] = model["dt_limiter"]
-        h5.attrs["save_every_pressure"] = save_every_pressure
-        h5.attrs["save_every_shear"] = save_every_shear
-        h5.attrs["pressure_steps"] = model["pressure_steps"]
-        h5.attrs["shear_steps"] = model["shear_steps"]
-        h5.attrs["pressure_frames_target"] = frames_per_phase
-        h5.attrs["shear_frames_target"] = shear_frames_per_phase
-        h5.attrs["interface_normal_frames_target"] = interface_frames_per_phase
-        h5.attrs["interface_shear_frames_target"] = shear_interface_frames_per_phase
-        h5.attrs["pressure_frames_actual"] = n_press_frames
-        h5.attrs["shear_frames_actual"] = n_shear_frames
-        h5.attrs["frame_sampling_mode"] = "linspace-stop-indices"
-        h5.attrs["dimension"] = dimension
-        h5.attrs["thickness"] = float(model["thickness"])
-        h5.attrs["include_initial_frame"] = int(include_initial_frame)
-        h5.attrs["store_bulk_strain"] = int(store_bulk_strain)
-        h5.attrs["store_bulk_velocity"] = int(store_bulk_velocity)
-        h5.attrs["normal_ramp_time"] = model["normal_ramp_time"]
-        h5.attrs["normal_ramp_steps"] = model["normal_ramp_steps"]
-        h5.attrs["shear_ramp_time"] = model["shear_ramp_time"]
-        h5.attrs["shear_ramp_shape"] = model["shear_ramp_shape"]
-        h5.attrs["normal_loading_mode"] = model["normal_loading_mode"]
-        h5.attrs["shear_loading_mode"] = model["shear_loading_mode"]
-        h5.attrs["shear_force_boundary"] = model["shear_force_boundary"]
-        h5.attrs["shear_displacement_boundary"] = model["shear_displacement_boundary"]
-        h5.attrs["normal_stress"] = model["normal_stress"]
-        h5.attrs["normal_displacement"] = model["normal_displacement"]
-        h5.attrs["normal_displacement_estimate"] = model["normal_displacement_estimate"]
-        h5.attrs["normal_displacement_loading_fraction"] = model[
-            "normal_displacement_loading_fraction"
-        ]
-        h5.attrs["normal_displacement_leading_fraction"] = model[
-            "normal_displacement_leading_fraction"
-        ]
-        h5.attrs["shear_displacement_k"] = model["shear_displacement_k"]
-        h5.attrs["shear_displacement_s"] = model["shear_displacement_s"]
-        h5.attrs["quasistatic_shear_fraction"] = model[
-            "quasistatic_shear_fraction"
-        ]
-        h5.attrs["quasistatic_shear_target"] = model[
-            "quasistatic_shear_target"
-        ]
-        if model["prestress_shear_displacement"] is not None:
-            h5.attrs["prestress_shear_displacement"] = model[
-                "prestress_shear_displacement"
+    last_progress_time = last_checkpoint_time
+    output_context = h5py.File(data_path, "r+" if resume else "w") if mpi_context.is_root else nullcontext(None)
+    with output_context as h5:
+        if mpi_context.is_root:
+            h5.attrs["backend"] = jax.default_backend()
+            h5.attrs["cfl"] = model["cfl"]
+            h5.attrs["contact_safety_factor"] = model["contact_safety_factor"]
+            if model["time_step_override"] is not None:
+                h5.attrs["time_step_override"] = model["time_step_override"]
+            h5.attrs["dt"] = dt
+            h5.attrs["dt_stable_limit"] = model["dt_stable_limit"]
+            h5.attrs["dt_bulk"] = model["dt_bulk"]
+            h5.attrs["dt_contact"] = model["dt_contact"]
+            h5.attrs["dt_stability_limiter"] = model["dt_stability_limiter"]
+            h5.attrs["dt_limiter"] = model["dt_limiter"]
+            h5.attrs["save_every_pressure"] = save_every_pressure
+            h5.attrs["save_every_shear"] = save_every_shear
+            h5.attrs["pressure_steps"] = model["pressure_steps"]
+            h5.attrs["shear_steps"] = model["shear_steps"]
+            h5.attrs["pressure_frames_target"] = frames_per_phase
+            h5.attrs["shear_frames_target"] = shear_frames_per_phase
+            h5.attrs["interface_normal_frames_target"] = interface_frames_per_phase
+            h5.attrs["interface_shear_frames_target"] = shear_interface_frames_per_phase
+            h5.attrs["pressure_frames_actual"] = n_press_frames
+            h5.attrs["shear_frames_actual"] = n_shear_frames
+            h5.attrs["frame_sampling_mode"] = "linspace-stop-indices"
+            h5.attrs["dimension"] = dimension
+            h5.attrs["thickness"] = float(model["thickness"])
+            h5.attrs["include_initial_frame"] = int(include_initial_frame)
+            h5.attrs["store_bulk_strain"] = int(store_bulk_strain)
+            h5.attrs["store_bulk_velocity"] = int(store_bulk_velocity)
+            h5.attrs["normal_ramp_time"] = model["normal_ramp_time"]
+            h5.attrs["normal_ramp_steps"] = model["normal_ramp_steps"]
+            h5.attrs["shear_ramp_time"] = model["shear_ramp_time"]
+            h5.attrs["shear_ramp_shape"] = model["shear_ramp_shape"]
+            h5.attrs["normal_loading_mode"] = model["normal_loading_mode"]
+            h5.attrs["shear_loading_mode"] = model["shear_loading_mode"]
+            h5.attrs["shear_force_boundary"] = model["shear_force_boundary"]
+            h5.attrs["shear_displacement_boundary"] = model["shear_displacement_boundary"]
+            h5.attrs["normal_stress"] = model["normal_stress"]
+            h5.attrs["normal_displacement"] = model["normal_displacement"]
+            h5.attrs["normal_displacement_estimate"] = model["normal_displacement_estimate"]
+            h5.attrs["normal_displacement_loading_fraction"] = model[
+                "normal_displacement_loading_fraction"
             ]
-        h5.attrs["quasistatic_shear_start_time"] = model[
-            "quasistatic_shear_start_time"
-        ]
-        h5.attrs["quasistatic_shear_ramp_time"] = model[
-            "quasistatic_shear_ramp_time"
-        ]
-        if model["normal_relaxation_time"] is not None:
-            h5.attrs["normal_relaxation_time"] = model[
-                "normal_relaxation_time"
+            h5.attrs["normal_displacement_leading_fraction"] = model[
+                "normal_displacement_leading_fraction"
             ]
-            # Legacy alias retained for older post-processing scripts.
-            h5.attrs["quasistatic_damping_time"] = model[
-                "quasistatic_damping_time"
+            h5.attrs["shear_displacement_k"] = model["shear_displacement_k"]
+            h5.attrs["shear_displacement_s"] = model["shear_displacement_s"]
+            h5.attrs["quasistatic_shear_fraction"] = model[
+                "quasistatic_shear_fraction"
             ]
-        h5.attrs["normal_relaxation_start_time"] = model[
-            "normal_relaxation_start_time"
-        ]
-        h5.attrs["mu_s_start_fraction"] = model["mu_s_start_fraction"]
-        h5.attrs["mu_s_end_fraction"] = model["mu_s_end_fraction"]
-        h5.attrs["pw_length"] = model["pw_length"]
-        h5.attrs["pw_mu_s_ratio"] = model["pw_mu_s_ratio"]
-        h5.attrs["pw_transition_length"] = model["pw_transition_length"]
-        h5.attrs["leading_edge_guard_length"] = model[
-            "leading_edge_guard_length"
-        ]
-        h5.attrs["leading_edge_guard_mu_s_ratio"] = model[
-            "leading_edge_guard_mu_s_ratio"
-        ]
-        h5.attrs["leading_edge_guard_transition_length"] = model[
-            "leading_edge_guard_transition_length"
-        ]
-        h5.attrs["leading_edge_tangential_taper_length"] = model[
-            "leading_edge_tangential_taper_length"
-        ]
-        h5.attrs["leading_edge_tangential_plateau_length"] = model[
-            "leading_edge_tangential_plateau_length"
-        ]
-        h5.attrs["leading_edge_tangential_taper_ratio"] = model[
-            "leading_edge_tangential_taper_ratio"
-        ]
-        h5.attrs["leading_edge_creep_length"] = model["leading_edge_creep_length"]
-        h5.attrs["leading_edge_creep_transition_length"] = model[
-            "leading_edge_creep_transition_length"
-        ]
-        h5.attrs["leading_edge_creep_mu"] = model["leading_edge_creep_mu"]
-        h5.attrs["leading_edge_creep_mu_k"] = model["leading_edge_creep_mu_k"]
-        h5.attrs["leading_edge_creep_relaxation_time"] = model[
-            "leading_edge_creep_relaxation_time"
-        ]
-        h5.attrs["moving_leading_chamfer_along_fault"] = model[
-            "moving_leading_chamfer_along_fault"
-        ]
-        h5.attrs["moving_leading_chamfer_perpendicular"] = model[
-            "moving_leading_chamfer_perpendicular"
-        ]
-        h5.attrs["friction_law"] = model["friction_law"]
-        if use_regularized_rate_state:
-            h5.attrs["rsf_velocity_projection"] = "log-speed-bisection-v1"
-        h5.attrs["moving_loading_extension_length"] = config.moving_loading_extension_length
-        h5.attrs["moving_actual_origin"] = np.asarray(moving.spec.origin)
-        h5.attrs["moving_actual_dimensions"] = np.asarray(moving.spec.dimensions)
-        h5.attrs["normal_loading_y_bounds"] = np.asarray([
-            case.moving.origin[1], case.moving.origin[1] + case.moving.dimensions[1]
-        ])
-        h5.attrs["rsf_reference_friction"] = model["rsf_reference_friction"]
-        h5.attrs["rsf_direct_effect"] = model["rsf_direct_effect"]
-        h5.attrs["rsf_state_effect"] = model["rsf_state_effect"]
-        h5.attrs["rsf_reference_velocity"] = model["rsf_reference_velocity"]
-        h5.attrs["rsf_reference_state"] = model["rsf_reference_state"]
-        h5.attrs["rsf_characteristic_slip"] = model[
-            "rsf_characteristic_slip"
-        ]
-        h5.attrs["rsf_initial_state"] = model["rsf_initial_state"]
-        h5.attrs["rsf_initial_state_mode"] = model["rsf_initial_state_mode"]
-        h5.attrs["rsf_initialization_velocity"] = model[
-            "rsf_initialization_velocity"
-        ]
-        if model["rsf_target_normalized_prestress"] is not None:
-            h5.attrs["rsf_target_normalized_prestress"] = model[
-                "rsf_target_normalized_prestress"
+            h5.attrs["quasistatic_shear_target"] = model[
+                "quasistatic_shear_target"
             ]
-        if model["rsf_profile_spec"] is not None:
-            h5.attrs["rsf_profile_spec_json"] = json.dumps(model["rsf_profile_spec"])
-        if model["shear_loading_stiffness"] is not None:
-            h5.attrs["shear_loading_stiffness"] = model[
-                "shear_loading_stiffness"
+            if model["prestress_shear_displacement"] is not None:
+                h5.attrs["prestress_shear_displacement"] = model[
+                    "prestress_shear_displacement"
+                ]
+            h5.attrs["quasistatic_shear_start_time"] = model[
+                "quasistatic_shear_start_time"
             ]
-        h5.attrs["stop_shear_loading_on_rupture"] = int(
-            model["stop_shear_loading_on_rupture"]
-        )
-        h5.attrs["shear_loading_stop_slip"] = model["shear_loading_stop_slip"]
-        if model["shear_loading_stop_velocity"] is not None:
-            h5.attrs["shear_loading_stop_velocity"] = model[
-                "shear_loading_stop_velocity"
+            h5.attrs["quasistatic_shear_ramp_time"] = model[
+                "quasistatic_shear_ramp_time"
             ]
-        h5.attrs["shear_loading_stop_uses_critical_profile"] = int(
-            model["shear_loading_stop_uses_critical_profile"]
-        )
-        if model["shear_loading_stop_min_y"] is not None:
-            h5.attrs["shear_loading_stop_min_y"] = model[
-                "shear_loading_stop_min_y"
+            if model["normal_relaxation_time"] is not None:
+                h5.attrs["normal_relaxation_time"] = model[
+                    "normal_relaxation_time"
+                ]
+                # Legacy alias retained for older post-processing scripts.
+                h5.attrs["quasistatic_damping_time"] = model[
+                    "quasistatic_damping_time"
+                ]
+            h5.attrs["normal_relaxation_start_time"] = model[
+                "normal_relaxation_start_time"
             ]
-        if model["shear_loading_stop_max_y"] is not None:
-            h5.attrs["shear_loading_stop_max_y"] = model[
-                "shear_loading_stop_max_y"
+            h5.attrs["mu_s_start_fraction"] = model["mu_s_start_fraction"]
+            h5.attrs["mu_s_end_fraction"] = model["mu_s_end_fraction"]
+            h5.attrs["pw_length"] = model["pw_length"]
+            h5.attrs["pw_mu_s_ratio"] = model["pw_mu_s_ratio"]
+            h5.attrs["pw_transition_length"] = model["pw_transition_length"]
+            h5.attrs["leading_edge_guard_length"] = model[
+                "leading_edge_guard_length"
             ]
-        if model["shear_loading_stop_coverage_fraction"] is not None:
-            h5.attrs["shear_loading_stop_coverage_fraction"] = model[
-                "shear_loading_stop_coverage_fraction"
+            h5.attrs["leading_edge_guard_mu_s_ratio"] = model[
+                "leading_edge_guard_mu_s_ratio"
             ]
-        h5.attrs["critical_slip"] = model["critical_slip"]
-        h5.attrs["mu_k"] = model["mu_k"]
-        h5.attrs["loading_edge_nucleation_length"] = model[
-            "loading_edge_nucleation_length"
-        ]
-        h5.attrs["loading_edge_critical_slip"] = model[
-            "loading_edge_critical_slip"
-        ]
-        h5.attrs["relax_tangential_contact_during_normal"] = int(
-            model["relax_tangential_contact_during_normal"]
-        )
-        h5.attrs["lock_shear_edge_during_normal"] = int(
-            config.lock_shear_edge_during_normal
-        )
-        h5.create_dataset("history_columns", data=np.asarray(history_columns, dtype="S"))
-        h5.create_dataset("phase_id", shape=(total_frames,), dtype="i4")
-        h5.create_dataset("step_id", shape=(total_frames,), dtype="i4")
-        h5.create_dataset(
-            "history",
-            shape=(total_frames, len(history_columns)),
-            dtype="f4",
-            compression=compression,
-            chunks=(min(256, total_frames), len(history_columns)),
-        )
-        normal_loading = h5.create_group("normal_loading")
-        normal_loading.create_dataset(
-            "boundary_y",
-            data=np.asarray(model["moving_normal_edge_y"], dtype=np.float32),
-        )
-        normal_loading.create_dataset(
-            "displacement_fraction_profile",
-            data=np.asarray(model["normal_displacement_profile"], dtype=np.float32),
-        )
-        normal_loading.create_dataset(
-            "target_displacement_profile",
-            data=np.asarray(
-                model["normal_displacement"]
-                * model["normal_displacement_profile"],
-                dtype=np.float32,
-            ),
-        )
-        interface_plot_mask = np.isin(
-            np.asarray(master_nodes), np.asarray(interface_plot_master_nodes)
-        )
-
-        moving_grp = _create_group_datasets(
-            h5, moving, "moving", total_frames, n_moving, int(moving.mesh.elements.shape[0])
-        )
-        stationary_grp = _create_group_datasets(
-            h5,
-            stationary,
-            "stationary",
-            total_frames,
-            n_stationary,
-            int(stationary.mesh.elements.shape[0]),
-        )
-        iface = h5.create_group("interface")
-        iface.attrs["mu_static"] = friction.mu_s
-        iface.attrs["mu_kinetic"] = friction.mu_k
-        iface.attrs["critical_slip"] = model["critical_slip"]
-        iface.attrs["loading_edge_nucleation_length"] = model[
-            "loading_edge_nucleation_length"
-        ]
-        iface.attrs["loading_edge_critical_slip"] = model[
-            "loading_edge_critical_slip"
-        ]
-        iface.attrs["mu_static_start_fraction"] = model["mu_s_start_fraction"]
-        iface.attrs["mu_static_end_fraction"] = model["mu_s_end_fraction"]
-        iface.attrs["pw_length"] = model["pw_length"]
-        iface.attrs["pw_mu_s_ratio"] = model["pw_mu_s_ratio"]
-        iface.attrs["pw_transition_length"] = model["pw_transition_length"]
-        iface.attrs["leading_edge_guard_length"] = model[
-            "leading_edge_guard_length"
-        ]
-        iface.attrs["leading_edge_guard_mu_s_ratio"] = model[
-            "leading_edge_guard_mu_s_ratio"
-        ]
-        iface.attrs["leading_edge_guard_transition_length"] = model[
-            "leading_edge_guard_transition_length"
-        ]
-        iface.attrs["leading_edge_tangential_taper_length"] = model[
-            "leading_edge_tangential_taper_length"
-        ]
-        iface.attrs["leading_edge_tangential_plateau_length"] = model[
-            "leading_edge_tangential_plateau_length"
-        ]
-        iface.attrs["leading_edge_tangential_taper_ratio"] = model[
-            "leading_edge_tangential_taper_ratio"
-        ]
-        iface.attrs["leading_edge_creep_length"] = model["leading_edge_creep_length"]
-        iface.attrs["leading_edge_creep_transition_length"] = model[
-            "leading_edge_creep_transition_length"
-        ]
-        iface.attrs["leading_edge_creep_mu"] = model["leading_edge_creep_mu"]
-        iface.attrs["leading_edge_creep_mu_k"] = model[
-            "leading_edge_creep_mu_k"
-        ]
-        iface.attrs["leading_edge_creep_relaxation_time"] = model[
-            "leading_edge_creep_relaxation_time"
-        ]
-        iface.attrs["friction_law"] = model["friction_law"]
-        iface.attrs["rsf_reference_friction"] = model[
-            "rsf_reference_friction"
-        ]
-        iface.attrs["rsf_direct_effect"] = model["rsf_direct_effect"]
-        iface.attrs["rsf_state_effect"] = model["rsf_state_effect"]
-        iface.attrs["rsf_reference_velocity"] = model[
-            "rsf_reference_velocity"
-        ]
-        iface.attrs["rsf_reference_state"] = model["rsf_reference_state"]
-        iface.attrs["rsf_characteristic_slip"] = model[
-            "rsf_characteristic_slip"
-        ]
-        iface.attrs["rsf_initial_state"] = model["rsf_initial_state"]
-        iface.create_dataset("master_nodes", data=np.asarray(interface_plot_master_nodes))
-        iface.create_dataset(
-            "slave_nodes",
-            data=np.asarray(slave_nodes[interface_plot_mask], dtype=np.int32),
-        )
-        iface.create_dataset(
-            "contact_line_y",
-            data=np.asarray(
-                moving.mesh.coords[np.asarray(interface_plot_master_nodes), 1],
-                dtype=np.float32,
-            ),
-        )
-        if dimension == 3:
-            iface.create_dataset(
-                "contact_line_z",
+            h5.attrs["leading_edge_guard_transition_length"] = model[
+                "leading_edge_guard_transition_length"
+            ]
+            h5.attrs["leading_edge_tangential_taper_length"] = model[
+                "leading_edge_tangential_taper_length"
+            ]
+            h5.attrs["leading_edge_tangential_plateau_length"] = model[
+                "leading_edge_tangential_plateau_length"
+            ]
+            h5.attrs["leading_edge_tangential_taper_ratio"] = model[
+                "leading_edge_tangential_taper_ratio"
+            ]
+            h5.attrs["leading_edge_creep_length"] = model["leading_edge_creep_length"]
+            h5.attrs["leading_edge_creep_transition_length"] = model[
+                "leading_edge_creep_transition_length"
+            ]
+            h5.attrs["leading_edge_creep_mu"] = model["leading_edge_creep_mu"]
+            h5.attrs["leading_edge_creep_mu_k"] = model["leading_edge_creep_mu_k"]
+            h5.attrs["leading_edge_creep_relaxation_time"] = model[
+                "leading_edge_creep_relaxation_time"
+            ]
+            h5.attrs["moving_leading_chamfer_along_fault"] = model[
+                "moving_leading_chamfer_along_fault"
+            ]
+            h5.attrs["moving_leading_chamfer_perpendicular"] = model[
+                "moving_leading_chamfer_perpendicular"
+            ]
+            h5.attrs["friction_law"] = model["friction_law"]
+            if use_regularized_rate_state:
+                h5.attrs["rsf_velocity_projection"] = "log-speed-bisection-v1"
+            h5.attrs["moving_loading_extension_length"] = config.moving_loading_extension_length
+            h5.attrs["moving_actual_origin"] = np.asarray(moving.spec.origin)
+            h5.attrs["moving_actual_dimensions"] = np.asarray(moving.spec.dimensions)
+            h5.attrs["normal_loading_y_bounds"] = np.asarray([
+                case.moving.origin[1], case.moving.origin[1] + case.moving.dimensions[1]
+            ])
+            h5.attrs["rsf_reference_friction"] = model["rsf_reference_friction"]
+            h5.attrs["rsf_direct_effect"] = model["rsf_direct_effect"]
+            h5.attrs["rsf_state_effect"] = model["rsf_state_effect"]
+            h5.attrs["rsf_reference_velocity"] = model["rsf_reference_velocity"]
+            h5.attrs["rsf_reference_state"] = model["rsf_reference_state"]
+            h5.attrs["rsf_characteristic_slip"] = model[
+                "rsf_characteristic_slip"
+            ]
+            h5.attrs["rsf_initial_state"] = model["rsf_initial_state"]
+            h5.attrs["rsf_initial_state_mode"] = model["rsf_initial_state_mode"]
+            h5.attrs["rsf_initialization_velocity"] = model[
+                "rsf_initialization_velocity"
+            ]
+            if model["rsf_target_normalized_prestress"] is not None:
+                h5.attrs["rsf_target_normalized_prestress"] = model[
+                    "rsf_target_normalized_prestress"
+                ]
+            if model["rsf_profile_spec"] is not None:
+                h5.attrs["rsf_profile_spec_json"] = json.dumps(model["rsf_profile_spec"])
+            if model["shear_loading_stiffness"] is not None:
+                h5.attrs["shear_loading_stiffness"] = model[
+                    "shear_loading_stiffness"
+                ]
+            h5.attrs["stop_shear_loading_on_rupture"] = int(
+                model["stop_shear_loading_on_rupture"]
+            )
+            h5.attrs["shear_loading_stop_slip"] = model["shear_loading_stop_slip"]
+            if model["shear_loading_stop_velocity"] is not None:
+                h5.attrs["shear_loading_stop_velocity"] = model[
+                    "shear_loading_stop_velocity"
+                ]
+            h5.attrs["shear_loading_stop_uses_critical_profile"] = int(
+                model["shear_loading_stop_uses_critical_profile"]
+            )
+            if model["shear_loading_stop_min_y"] is not None:
+                h5.attrs["shear_loading_stop_min_y"] = model[
+                    "shear_loading_stop_min_y"
+                ]
+            if model["shear_loading_stop_max_y"] is not None:
+                h5.attrs["shear_loading_stop_max_y"] = model[
+                    "shear_loading_stop_max_y"
+                ]
+            if model["shear_loading_stop_coverage_fraction"] is not None:
+                h5.attrs["shear_loading_stop_coverage_fraction"] = model[
+                    "shear_loading_stop_coverage_fraction"
+                ]
+            h5.attrs["critical_slip"] = model["critical_slip"]
+            h5.attrs["mu_k"] = model["mu_k"]
+            h5.attrs["loading_edge_nucleation_length"] = model[
+                "loading_edge_nucleation_length"
+            ]
+            h5.attrs["loading_edge_critical_slip"] = model[
+                "loading_edge_critical_slip"
+            ]
+            h5.attrs["relax_tangential_contact_during_normal"] = int(
+                model["relax_tangential_contact_during_normal"]
+            )
+            h5.attrs["lock_shear_edge_during_normal"] = int(
+                config.lock_shear_edge_during_normal
+            )
+            h5.create_dataset("history_columns", data=np.asarray(history_columns, dtype="S"))
+            h5.create_dataset("phase_id", shape=(total_frames,), dtype="i4")
+            h5.create_dataset("step_id", shape=(total_frames,), dtype="i4")
+            h5.create_dataset(
+                "history",
+                shape=(total_frames, len(history_columns)),
+                dtype="f4",
+                compression=compression,
+                chunks=(min(256, total_frames), len(history_columns)),
+            )
+            normal_loading = h5.create_group("normal_loading")
+            normal_loading.create_dataset(
+                "boundary_y",
+                data=np.asarray(model["moving_normal_edge_y"], dtype=np.float32),
+            )
+            normal_loading.create_dataset(
+                "displacement_fraction_profile",
+                data=np.asarray(model["normal_displacement_profile"], dtype=np.float32),
+            )
+            normal_loading.create_dataset(
+                "target_displacement_profile",
                 data=np.asarray(
-                    moving.mesh.coords[np.asarray(interface_plot_master_nodes), 2],
+                    model["normal_displacement"]
+                    * model["normal_displacement_profile"],
                     dtype=np.float32,
                 ),
             )
-        iface.create_dataset(
-            "mu_static_profile",
-            data=np.asarray(mu_s_profile[interface_plot_mask], dtype=np.float32),
-        )
-        iface.create_dataset(
-            "mu_kinetic_profile",
-            data=np.asarray(mu_k_profile[interface_plot_mask], dtype=np.float32),
-        )
-        iface.create_dataset(
-            "critical_slip_profile",
-            data=np.asarray(
-                critical_slip_profile[interface_plot_mask], dtype=np.float32
-            ),
-        )
-        iface.create_dataset(
-            "creep_weight_profile",
-            data=np.asarray(
-                creep_weight_profile[interface_plot_mask], dtype=np.float32
-            ),
-        )
-        iface.create_dataset(
-            "tangential_penalty_profile",
-            data=np.asarray(penalty_t[interface_plot_mask], dtype=np.float32),
-        )
-        if use_rate_state:
-            for name in (
-                "reference_friction",
-                "direct_effect",
-                "state_effect",
-                "reference_velocity",
-                "reference_state",
-                "characteristic_slip",
-                "initial_state",
-            ):
+            interface_plot_mask = np.isin(
+                np.asarray(master_nodes), np.asarray(interface_plot_master_nodes)
+            )
+
+            moving_grp = _create_group_datasets(
+                h5, moving, "moving", total_frames, n_moving, int(moving.mesh.elements.shape[0])
+            )
+            stationary_grp = _create_group_datasets(
+                h5,
+                stationary,
+                "stationary",
+                total_frames,
+                n_stationary,
+                int(stationary.mesh.elements.shape[0]),
+            )
+            iface = h5.create_group("interface")
+            iface.attrs["mu_static"] = friction.mu_s
+            iface.attrs["mu_kinetic"] = friction.mu_k
+            iface.attrs["critical_slip"] = model["critical_slip"]
+            iface.attrs["loading_edge_nucleation_length"] = model[
+                "loading_edge_nucleation_length"
+            ]
+            iface.attrs["loading_edge_critical_slip"] = model[
+                "loading_edge_critical_slip"
+            ]
+            iface.attrs["mu_static_start_fraction"] = model["mu_s_start_fraction"]
+            iface.attrs["mu_static_end_fraction"] = model["mu_s_end_fraction"]
+            iface.attrs["pw_length"] = model["pw_length"]
+            iface.attrs["pw_mu_s_ratio"] = model["pw_mu_s_ratio"]
+            iface.attrs["pw_transition_length"] = model["pw_transition_length"]
+            iface.attrs["leading_edge_guard_length"] = model[
+                "leading_edge_guard_length"
+            ]
+            iface.attrs["leading_edge_guard_mu_s_ratio"] = model[
+                "leading_edge_guard_mu_s_ratio"
+            ]
+            iface.attrs["leading_edge_guard_transition_length"] = model[
+                "leading_edge_guard_transition_length"
+            ]
+            iface.attrs["leading_edge_tangential_taper_length"] = model[
+                "leading_edge_tangential_taper_length"
+            ]
+            iface.attrs["leading_edge_tangential_plateau_length"] = model[
+                "leading_edge_tangential_plateau_length"
+            ]
+            iface.attrs["leading_edge_tangential_taper_ratio"] = model[
+                "leading_edge_tangential_taper_ratio"
+            ]
+            iface.attrs["leading_edge_creep_length"] = model["leading_edge_creep_length"]
+            iface.attrs["leading_edge_creep_transition_length"] = model[
+                "leading_edge_creep_transition_length"
+            ]
+            iface.attrs["leading_edge_creep_mu"] = model["leading_edge_creep_mu"]
+            iface.attrs["leading_edge_creep_mu_k"] = model[
+                "leading_edge_creep_mu_k"
+            ]
+            iface.attrs["leading_edge_creep_relaxation_time"] = model[
+                "leading_edge_creep_relaxation_time"
+            ]
+            iface.attrs["friction_law"] = model["friction_law"]
+            iface.attrs["rsf_reference_friction"] = model[
+                "rsf_reference_friction"
+            ]
+            iface.attrs["rsf_direct_effect"] = model["rsf_direct_effect"]
+            iface.attrs["rsf_state_effect"] = model["rsf_state_effect"]
+            iface.attrs["rsf_reference_velocity"] = model[
+                "rsf_reference_velocity"
+            ]
+            iface.attrs["rsf_reference_state"] = model["rsf_reference_state"]
+            iface.attrs["rsf_characteristic_slip"] = model[
+                "rsf_characteristic_slip"
+            ]
+            iface.attrs["rsf_initial_state"] = model["rsf_initial_state"]
+            iface.create_dataset("master_nodes", data=np.asarray(interface_plot_master_nodes))
+            iface.create_dataset(
+                "slave_nodes",
+                data=np.asarray(slave_nodes[interface_plot_mask], dtype=np.int32),
+            )
+            iface.create_dataset(
+                "contact_line_y",
+                data=np.asarray(
+                    moving.mesh.coords[np.asarray(interface_plot_master_nodes), 1],
+                    dtype=np.float32,
+                ),
+            )
+            if dimension == 3:
                 iface.create_dataset(
-                    f"rsf_{name}_profile",
+                    "contact_line_z",
                     data=np.asarray(
-                        rsf_parameters[name][interface_plot_mask], dtype=np.float32
+                        moving.mesh.coords[np.asarray(interface_plot_master_nodes), 2],
+                        dtype=np.float32,
                     ),
                 )
-        iface.create_dataset(
-            "plastic_slip",
-            shape=(total_frames, int(interface_plot_master_nodes.shape[0])),
-            dtype="f4",
-            compression=compression,
-            chunks=(1, int(interface_plot_master_nodes.shape[0])),
-        )
-        iface.create_dataset(
-            "cumulative_slip",
-            shape=(total_frames, int(interface_plot_master_nodes.shape[0])),
-            dtype="f4",
-            compression=compression,
-            chunks=(1, int(interface_plot_master_nodes.shape[0])),
-        )
-        iface.create_dataset(
-            "rsf_state",
-            shape=(total_frames, int(interface_plot_master_nodes.shape[0])),
-            dtype="f4",
-            compression=compression,
-            chunks=(1, int(interface_plot_master_nodes.shape[0])),
-        )
-        iface.create_dataset(
-            "friction_coefficient",
-            shape=(total_frames, int(interface_plot_master_nodes.shape[0])),
-            dtype="f4",
-            compression=compression,
-            chunks=(1, int(interface_plot_master_nodes.shape[0])),
-        )
-        iface.create_dataset(
-            "friction_velocity",
-            shape=(total_frames, int(interface_plot_master_nodes.shape[0])),
-            dtype="f4",
-            compression=compression,
-            chunks=(1, int(interface_plot_master_nodes.shape[0])),
-        )
-        iface.create_dataset(
-            "friction_strength",
-            shape=(total_frames, int(interface_plot_master_nodes.shape[0])),
-            dtype="f4",
-            compression=compression,
-            chunks=(1, int(interface_plot_master_nodes.shape[0])),
-        )
-        iface.create_dataset(
-            "slip_rate",
-            shape=(total_frames, int(interface_plot_master_nodes.shape[0])),
-            dtype="f4",
-            compression=compression,
-            chunks=(1, int(interface_plot_master_nodes.shape[0])),
-        )
-
-        if separate_interface_output:
-            high = h5.create_group("interface_high_rate")
-            high.attrs["sampling"] = "independent high-rate interface history"
-            high["contact_line_y"] = iface["contact_line_y"]
-            high["master_nodes"] = iface["master_nodes"]
-            high["slave_nodes"] = iface["slave_nodes"]
-            high.create_dataset(
-                "history",
-                shape=(total_interface_frames, len(history_columns)),
+            iface.create_dataset(
+                "mu_static_profile",
+                data=np.asarray(mu_s_profile[interface_plot_mask], dtype=np.float32),
+            )
+            iface.create_dataset(
+                "mu_kinetic_profile",
+                data=np.asarray(mu_k_profile[interface_plot_mask], dtype=np.float32),
+            )
+            iface.create_dataset(
+                "critical_slip_profile",
+                data=np.asarray(
+                    critical_slip_profile[interface_plot_mask], dtype=np.float32
+                ),
+            )
+            iface.create_dataset(
+                "creep_weight_profile",
+                data=np.asarray(
+                    creep_weight_profile[interface_plot_mask], dtype=np.float32
+                ),
+            )
+            iface.create_dataset(
+                "tangential_penalty_profile",
+                data=np.asarray(penalty_t[interface_plot_mask], dtype=np.float32),
+            )
+            if use_rate_state:
+                for name in (
+                    "reference_friction",
+                    "direct_effect",
+                    "state_effect",
+                    "reference_velocity",
+                    "reference_state",
+                    "characteristic_slip",
+                    "initial_state",
+                ):
+                    iface.create_dataset(
+                        f"rsf_{name}_profile",
+                        data=np.asarray(
+                            rsf_parameters[name][interface_plot_mask], dtype=np.float32
+                        ),
+                    )
+            iface.create_dataset(
+                "plastic_slip",
+                shape=(total_frames, int(interface_plot_master_nodes.shape[0])),
                 dtype="f4",
                 compression=compression,
-                chunks=(min(256, total_interface_frames), len(history_columns)),
+                chunks=(1, int(interface_plot_master_nodes.shape[0])),
             )
-            high.create_dataset("history_columns", data=np.asarray(history_columns, dtype="S"))
-            high.create_dataset("phase_id", shape=(total_interface_frames,), dtype="i4")
-            high.create_dataset("step_id", shape=(total_interface_frames,), dtype="i4")
-            for name in (
-                "plastic_slip",
+            iface.create_dataset(
                 "cumulative_slip",
+                shape=(total_frames, int(interface_plot_master_nodes.shape[0])),
+                dtype="f4",
+                compression=compression,
+                chunks=(1, int(interface_plot_master_nodes.shape[0])),
+            )
+            iface.create_dataset(
                 "rsf_state",
+                shape=(total_frames, int(interface_plot_master_nodes.shape[0])),
+                dtype="f4",
+                compression=compression,
+                chunks=(1, int(interface_plot_master_nodes.shape[0])),
+            )
+            iface.create_dataset(
                 "friction_coefficient",
+                shape=(total_frames, int(interface_plot_master_nodes.shape[0])),
+                dtype="f4",
+                compression=compression,
+                chunks=(1, int(interface_plot_master_nodes.shape[0])),
+            )
+            iface.create_dataset(
                 "friction_velocity",
+                shape=(total_frames, int(interface_plot_master_nodes.shape[0])),
+                dtype="f4",
+                compression=compression,
+                chunks=(1, int(interface_plot_master_nodes.shape[0])),
+            )
+            iface.create_dataset(
                 "friction_strength",
+                shape=(total_frames, int(interface_plot_master_nodes.shape[0])),
+                dtype="f4",
+                compression=compression,
+                chunks=(1, int(interface_plot_master_nodes.shape[0])),
+            )
+            iface.create_dataset(
                 "slip_rate",
-            ):
+                shape=(total_frames, int(interface_plot_master_nodes.shape[0])),
+                dtype="f4",
+                compression=compression,
+                chunks=(1, int(interface_plot_master_nodes.shape[0])),
+            )
+
+            if separate_interface_output:
+                high = h5.create_group("interface_high_rate")
+                high.attrs["sampling"] = "independent high-rate interface history"
+                high["contact_line_y"] = iface["contact_line_y"]
+                high["master_nodes"] = iface["master_nodes"]
+                high["slave_nodes"] = iface["slave_nodes"]
                 high.create_dataset(
-                    name,
-                    shape=(
-                        total_interface_frames,
-                        int(interface_plot_master_nodes.shape[0]),
-                    ),
+                    "history",
+                    shape=(total_interface_frames, len(history_columns)),
                     dtype="f4",
                     compression=compression,
-                    chunks=(1, int(interface_plot_master_nodes.shape[0])),
+                    chunks=(min(256, total_interface_frames), len(history_columns)),
                 )
+                high.create_dataset("history_columns", data=np.asarray(history_columns, dtype="S"))
+                high.create_dataset("phase_id", shape=(total_interface_frames,), dtype="i4")
+                high.create_dataset("step_id", shape=(total_interface_frames,), dtype="i4")
+                for name in (
+                    "plastic_slip",
+                    "cumulative_slip",
+                    "rsf_state",
+                    "friction_coefficient",
+                    "friction_velocity",
+                    "friction_strength",
+                    "slip_rate",
+                ):
+                    high.create_dataset(
+                        name,
+                        shape=(
+                            total_interface_frames,
+                            int(interface_plot_master_nodes.shape[0]),
+                        ),
+                        dtype="f4",
+                        compression=compression,
+                        chunks=(1, int(interface_plot_master_nodes.shape[0])),
+                    )
 
-        if resume:
+            h5.attrs["mpi_ranks"] = mpi_context.size
+            h5.attrs["element_type"] = config.element_type
+        if resume and mpi_context.is_root:
             for name in list(h5.keys()):
                 if name != "_resume_stash":
                     del h5[name]
@@ -4597,7 +4629,7 @@ def run_simulation_dumped(
             h5.attrs["checkpoint_step_id"] = resume_step_id
             h5.attrs["saved_frames"] = frame_count
             h5.attrs["saved_interface_frames"] = interface_frame_count
-        elif include_initial_frame:
+        elif not resume and include_initial_frame:
             save_frame(h5, 0, carry, initial_row, phase_id=0, step_id=0)
             frame_count = 1
             if separate_interface_output:
@@ -4605,7 +4637,7 @@ def run_simulation_dumped(
                     h5, 0, carry, initial_row, phase_id=0, step_id=0
                 )
                 interface_frame_count = 1
-        else:
+        elif not resume:
             frame_count = 0
             interface_frame_count = 0
 
@@ -4616,7 +4648,8 @@ def run_simulation_dumped(
                 history_columns, compression,
                 resume_step=(resume_step_id if resume_phase_id == 2 else 0) if resume else None,
             )
-        h5.attrs["rsf_state_integration_dtype"] = str(state_dtype)
+        if mpi_context.is_root:
+            h5.attrs["rsf_state_integration_dtype"] = str(state_dtype)
 
         def save_checkpoint(
             phase_id: int,
@@ -4624,7 +4657,8 @@ def run_simulation_dumped(
             current_carry: tuple[jax.Array, ...],
         ) -> None:
             nonlocal last_checkpoint_time
-            if checkpoint_path is None:
+            if checkpoint_path is None or not mpi_context.is_root:
+                last_checkpoint_time = time.monotonic()
                 return
             if probe_writer is not None:
                 probe_writer.flush()
@@ -4768,6 +4802,16 @@ def run_simulation_dumped(
                     chunk_timings[phase_label]["steps"] += stop - prev_stop
                 prev_stop = stop
                 now = time.monotonic()
+                if mpi_context.is_root and now - last_progress_time >= 60:
+                    absolute_step = stop + (model["pressure_steps"] if phase_id == 2 else 0)
+                    total_steps = model["pressure_steps"] + model["shear_steps"]
+                    print(
+                        f"[progress] {phase_label} t={absolute_step * dt * 1e3:.6f} ms "
+                        f"steps={absolute_step}/{total_steps} "
+                        f"frames={frame_count}/{total_frames} ranks={mpi_context.size}",
+                        flush=True,
+                    )
+                    last_progress_time = now
                 interval_due = (
                     checkpoint_interval_seconds is not None
                     and now - last_checkpoint_time >= checkpoint_interval_seconds
@@ -4775,6 +4819,9 @@ def run_simulation_dumped(
                 deadline_reached = (
                     checkpoint_deadline_monotonic is not None
                     and now >= checkpoint_deadline_monotonic
+                )
+                interval_due, deadline_reached, signal_due = synchronize_flags(
+                    mpi_context, interval_due, deadline_reached, checkpoint_requested["value"]
                 )
                 phase_complete = stop == int(simulation_stops[-1])
                 if phase_complete and phase_id == 1 and normal_relaxation:
@@ -4862,12 +4909,12 @@ def run_simulation_dumped(
                     and (
                         interval_due
                         or deadline_reached
-                        or checkpoint_requested["value"]
+                        or signal_due
                         or phase_complete
                     )
                 ):
                     save_checkpoint(phase_id, stop, carry)
-                if deadline_reached or checkpoint_requested["value"]:
+                if deadline_reached or signal_due:
                     restore_signal_handlers()
                     raise SimulationCheckpointed(
                         f"Checkpoint saved at phase {phase_id}, step {stop}: "
@@ -4876,15 +4923,18 @@ def run_simulation_dumped(
 
         if probe_writer is not None:
             probe_writer.flush()
-        h5.attrs["steady_chunk_timings_json"] = json.dumps(chunk_timings)
-        h5.attrs["saved_frames"] = frame_count
-        h5.attrs["saved_interface_frames"] = (
-            interface_frame_count if separate_interface_output else frame_count
-        )
+        if mpi_context.is_root:
+            h5.attrs["steady_chunk_timings_json"] = json.dumps(chunk_timings)
+            h5.attrs["saved_frames"] = frame_count
+            h5.attrs["saved_interface_frames"] = (
+                interface_frame_count if separate_interface_output else frame_count
+            )
 
-    if checkpoint_path is not None:
+    if checkpoint_path is not None and mpi_context.is_root:
         checkpoint_path.unlink(missing_ok=True)
     restore_signal_handlers()
+    if not mpi_context.is_root:
+        return {"mpi_rank": mpi_context.rank}
 
     (
         final_u,
@@ -4981,6 +5031,9 @@ def run_simulation_dumped(
             }
 
     summary = {
+        "mpi_ranks": mpi_context.size,
+        "element_type": config.element_type,
+        "steady_chunk_timings": chunk_timings,
         "backend": jax.default_backend(),
         "devices": [str(device) for device in jax.devices()],
         "dtype": str(history.dtype),
