@@ -28,7 +28,7 @@ if [[ -f "$RUN_DIR/data/checkpoint.npz" ]]; then
 fi
 limit=$((SLURM_JOB_END_TIME - $(date +%s) - 600))
 [[ $limit -gt 0 ]]
-mpirun -np "$SLURM_NTASKS" --map-by "slot:PE=$OMP_NUM_THREADS" --bind-to core \
+mpirun -np "$SLURM_NTASKS" --map-by "package:PE=$OMP_NUM_THREADS" --bind-to core \
   "$PYTHON" "$ROOT/scripts/run_lsw_case.py" \
   "$ROOT/cases/lsw_0114_normal_stress_16mpa.toml" \
   --run-dir "$RUN_DIR" --time-limit-seconds "$limit" "${args[@]}"

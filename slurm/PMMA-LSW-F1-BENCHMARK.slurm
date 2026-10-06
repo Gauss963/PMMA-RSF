@@ -15,7 +15,7 @@ module load gcc/11.2.0 openmpi/5.0.2
 ROOT=${ROOT:-/work1/gauss112/PMMA-LSW-MPI}
 PYTHON=/home/gauss112/.venvs/tatva-lsw-mpi/bin/python
 CASE="$ROOT/cases/lsw_0114_normal_stress_16mpa.toml"
-RESULTS="$ROOT/runs/benchmarks/lsw-0114-${SLURM_JOB_ID}"
+RESULTS=${RESULTS:-"$ROOT/runs/benchmarks/lsw-0114-${SLURM_JOB_ID}"}
 mkdir -p "$RESULTS"
 export PYTHONPATH="$ROOT"
 export JAX_PLATFORMS=cpu
@@ -26,9 +26,13 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=false
 run_test() {
   local ranks=$1 threads=$2 name=$3 steps=$4
   shift 4
+  if [[ -f "$RESULTS/$name/stats/summary.json" ]]; then
+    echo "Reusing completed benchmark: $name"
+    return
+  fi
   export OMP_NUM_THREADS=$threads TF_NUM_INTRAOP_THREADS=$threads TF_NUM_INTEROP_THREADS=1
   export XLA_FLAGS="--xla_cpu_multi_thread_eigen=true intra_op_parallelism_threads=$threads"
-  mpirun -np "$ranks" --map-by "slot:PE=$threads" --bind-to core \
+  mpirun -np "$ranks" --map-by "package:PE=$threads" --bind-to core \
     "$PYTHON" "$ROOT/scripts/run_lsw_case.py" "$CASE" \
     --run-dir "$RESULTS/$name" --benchmark-steps "$steps" "$@" \
     > "$RESULTS/$name.log" 2>&1
@@ -48,7 +52,7 @@ run_test 4 4 resume-small 400 --mesh-size 20 --resume
 
 # Same 1-mm mesh and original dump cadence; timings exclude first compilations.
 run_test 1 8 serial-full 4000
-run_test 7 8 mpi7-full 4000
+run_test 8 7 mpi8-full 4000
 run_test 14 4 mpi14-full 4000
 run_test 28 2 mpi28-full 4000
 "$PYTHON" "$ROOT/scripts/compare_lsw_mpi.py" \
