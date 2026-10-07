@@ -26,7 +26,9 @@ args=()
 if [[ -f "$RUN_DIR/data/checkpoint.npz" ]]; then
   args+=(--resume)
 fi
-limit=$((SLURM_JOB_END_TIME - $(date +%s) - 600))
+# F1's Slurm does not export SLURM_JOB_END_TIME; fall back to the scheduler's end time.
+end=${SLURM_JOB_END_TIME:-$(date -d "$(squeue -h -j "$SLURM_JOB_ID" -o %e)" +%s)}
+limit=$((end - $(date +%s) - 600))
 [[ $limit -gt 0 ]]
 mpirun -np "$SLURM_NTASKS" --map-by "package:PE=$OMP_NUM_THREADS" --bind-to core \
   "$PYTHON" "$ROOT/scripts/run_lsw_case.py" \
