@@ -1,8 +1,10 @@
 # LSW 0114 with a 16 MPa normal stress boundary
 
-Status as of 2026-10-07 (Asia/Taipei): **production not submitted**. F1 rejected
-submission because the iService wallet has insufficient credits. Do not attempt
-an alternative submission method or account to bypass that restriction.
+Status as of 2026-10-07 (Asia/Taipei): **production not submitted**. F1 rejects
+submission with an insufficient-credit error, but `wallet MST113389` reports a
+positive balance of **941.7681 SU**. The conflicting balances require investigation
+by F1 support; actual insufficient funds have not been established. Do not attempt
+an alternative submission method or unrelated account to bypass the rejection.
 
 ## Configuration provenance
 
@@ -91,10 +93,27 @@ JAX maximum is 0.9.1; the actual JAX 0.9.2 small-mesh and resume checks passed.
 
 Submission initially encountered a scheduler script/environment I/O error. A
 Slurm interactive allocation was used for the successful partial benchmark.
-The subsequent submission now explicitly reports insufficient iService credits
-(reported balance approximately -50,052.96), so no further allocation is attempted.
+The subsequent submission explicitly reports insufficient iService credits.
+Rechecking on 2026-10-07 after the user supplied a positive wallet balance confirms
+a discrepancy, not a demonstrated need to top up:
 
-After the user restores credit or authorizes a funded account:
+- Direct `wallet MST113389`: **941.7681 SU**, confirmed on the active F1 login node.
+- `sbatch --account=MST113389 --time=00:30:00 ...`: rejected with
+  `You do not have enough credits in your iService wallet -50052.955500000004`.
+- Retrying with the canonical Slurm account spelling `mst113389` returns the same
+  error. `sacctmgr` confirms this account is associated with `gauss112` on `f1`.
+- No `SLURM*` or `SBATCH*` environment overrides were present. `sbatch` resolves to
+  `/usr/bin/sbatch`; the controller reports `JobSubmitPlugins=lua`.
+- No job ID was created; `squeue -u gauss112` was empty during these checks.
+
+The reason for the disagreement is not yet known. In particular, stale data or an
+account mapping problem are possibilities, not verified diagnoses. F1 support
+needs to reconcile the wallet query with the submission-side credit check. Do not
+assume that another top-up, a different launch route, or an unrelated account is
+the appropriate remedy. SU-to-cost conversion has not been established here, so
+the positive balance alone does not prove that the complete run is affordable.
+
+After F1 resolves the submission-side credit discrepancy:
 
 1. Finish the package-aware benchmark, reusing the completed results:
 
