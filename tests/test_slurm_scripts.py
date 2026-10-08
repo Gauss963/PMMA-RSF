@@ -141,7 +141,7 @@ def test_single_run_cpu_analysis_uses_current_f1_checkout_without_animation():
 
     assert "#SBATCH --partition=hm112" in content
     assert "#SBATCH --cpus-per-task=8" in content
-    assert "ROOT=/work1/gauss112/tatva" in content
+    assert "ROOT=${ROOT:-/work1/gauss112/tatva}" in content
     assert "postprocess_velocity_weakening_run.py" in content
     assert "--missing-only" in content
     assert "render_stress_frames.py" not in content

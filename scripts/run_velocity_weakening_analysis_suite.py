@@ -226,10 +226,16 @@ def main() -> int:
 
     station_args = ["--stations", *stations]
     y_point_args = ["--y-points", *stations]
+    is_rsf = str(rupture["friction_law"]).startswith("rate-state")
     rupture_script = (
-        "plot_rsf_rupture_analysis.py"
-        if str(rupture["friction_law"]).startswith("rate-state")
-        else "plot_rupture_speed_and_fault_profile.py"
+        "plot_rsf_rupture_analysis.py" if is_rsf else "plot_rupture_speed_and_fault_profile.py"
+    )
+    # The LSW plotter draws the creep mechanism and writes no RSF metrics.
+    mechanism_outputs = (
+        [*output_pair(plot_dir / "rsf_mechanism.png"),
+         plot_dir / "rsf_rupture_analysis_metrics.json"]
+        if is_rsf
+        else output_pair(plot_dir / "creep_mechanism.png")
     )
     commands: list[tuple[str, list[str], list[Path]]] = [
         (
@@ -249,8 +255,7 @@ def main() -> int:
             [
                 *output_pair(plot_dir / "rupture_speed_stable_fit.png"),
                 *output_pair(plot_dir / "fault_interface_profile.png"),
-                *output_pair(plot_dir / "rsf_mechanism.png"),
-                plot_dir / "rsf_rupture_analysis_metrics.json",
+                *mechanism_outputs,
             ],
         ),
         (

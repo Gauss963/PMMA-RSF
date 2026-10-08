@@ -1,20 +1,25 @@
 #!/bin/bash
+# 1 rank x 8 threads: F1 benchmark (job 1848) showed 56-core MPI layouts were only
+# 1.4x faster at 5x the core-hours, because rank-0 HDF5 output dominates the shear phase.
 #SBATCH --account=MST113389
 #SBATCH --partition=hm112
-#SBATCH --job-name=LSW-0114-stress16
-#SBATCH --output=/work1/gauss112/lsw-0114-%j.out
-#SBATCH --error=/work1/gauss112/lsw-0114-%j.err
+#SBATCH --job-name=LSW-F1
+#SBATCH --output=/work1/gauss112/lsw-%j.out
+#SBATCH --error=/work1/gauss112/lsw-%j.err
 #SBATCH --nodes=1
-#SBATCH --ntasks=14
-#SBATCH --cpus-per-task=4
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
 #SBATCH --hint=nomultithread
-#SBATCH --time=48:00:00
+#SBATCH --time=36:00:00
 
 set -euo pipefail
 module load gcc/11.2.0 openmpi/5.0.2
 ROOT=${ROOT:-/work1/gauss112/PMMA-LSW-MPI}
 PYTHON=/home/gauss112/.venvs/tatva-lsw-mpi/bin/python
 RUN_DIR=${RUN_DIR:?Set the unique production run directory before submission}
+CASE=${CASE:?Set the LSW case TOML (path relative to ROOT or absolute)}
+[[ "$CASE" = /* ]] || CASE="$ROOT/$CASE"
+[[ -f "$CASE" ]] || { echo "Missing case: $CASE" >&2; exit 1; }
 export PYTHONPATH="$ROOT"
 export JAX_PLATFORMS=cpu PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
@@ -32,5 +37,5 @@ limit=$((end - $(date +%s) - 600))
 [[ $limit -gt 0 ]]
 mpirun -np "$SLURM_NTASKS" --map-by "package:PE=$OMP_NUM_THREADS" --bind-to core \
   "$PYTHON" "$ROOT/scripts/run_lsw_case.py" \
-  "$ROOT/cases/lsw_0114_normal_stress_16mpa.toml" \
+  "$CASE" \
   --run-dir "$RUN_DIR" --time-limit-seconds "$limit" "${args[@]}"

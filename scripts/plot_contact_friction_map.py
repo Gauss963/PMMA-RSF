@@ -135,8 +135,9 @@ def _add_rupture_speed_fit(
     *,
     fit_start: float = RUPTURE_FIT_START_MM,
     fit_end: float,
+    excluded_zone: str = "VS",
 ) -> None:
-    """Overlay sparse D_c arrivals and their pre-VS linear fit."""
+    """Overlay sparse D_c arrivals and their pre-VS (or pre-creep) linear fit."""
     if not bool(fit["available"]):
         return
 
@@ -172,7 +173,7 @@ def _add_rupture_speed_fit(
         0.975,
         0.965,
         (
-            rf"Rupture fit, {fit_start:.0f}-{fit_end:.1f} mm (VS excluded)"
+            rf"Rupture fit, {fit_start:.0f}-{fit_end:.1f} mm ({excluded_zone} excluded)"
             "\n"
             rf"$\Delta\delta=D_c$: "
             rf"$v_r={float(fit['speed_m_per_s']):.1f}$ m s$^{{-1}}$"
@@ -282,6 +283,27 @@ def _fit_end_before_leading_vs(
     return float(np.max(eligible)), float(vs_start)
 
 
+def _fit_end_before_leading_zone(
+    contact_y: np.ndarray,
+    profile_spec: dict[str, object],
+    creep_weight: np.ndarray | None,
+) -> tuple[float, float | None, float | None]:
+    """Fit end before an RSF leading VS tail or an LSW leading creep tail.
+
+    ``creep_weight`` must be ordered like ``contact_y``. Returns the fit end,
+    the VS start (RSF) and the creep start (LSW); absent zones are ``None``.
+    """
+    contact_y = np.asarray(contact_y, dtype=np.float64)
+    fit_end, vs_start = _fit_end_before_leading_vs(contact_y, profile_spec)
+    creep_start = None
+    if creep_weight is not None and np.any(np.asarray(creep_weight) > 0.0):
+        creep_start = float(np.min(contact_y[np.asarray(creep_weight) > 0.0]))
+        before_creep = contact_y[contact_y < creep_start]
+        if before_creep.size:
+            fit_end = min(fit_end, float(np.max(before_creep)))
+    return fit_end, vs_start, creep_start
+
+
 def _save_with_png(fig: plt.Figure, output_path: Path) -> Path:
     fig.savefig(output_path, bbox_inches="tight", pad_inches=0.04)
     png_path = output_path.with_suffix(".png")
@@ -357,6 +379,14 @@ def plot_mu_eff_maps(
                 dtype=np.float64,
             )
             if "rsf_characteristic_slip_profile" in h5["interface"]
+            # LSW dumps store their local D_c under a different name.
+            else np.asarray(h5["interface/critical_slip_profile"], dtype=np.float64)
+            if "critical_slip_profile" in h5["interface"]
+            else None
+        )
+        creep_weight = (
+            np.asarray(h5["interface/creep_weight_profile"], dtype=np.float64)
+            if "creep_weight_profile" in h5["interface"]
             else None
         )
         wave_speeds = _read_wave_speeds(input_path, h5)
@@ -397,9 +427,10 @@ def plot_mu_eff_maps(
             y_sorted,
             rupture_arrival_sorted,
         )
-    rupture_fit_end, leading_vs_start = _fit_end_before_leading_vs(
+    rupture_fit_end, leading_vs_start, leading_creep_start = _fit_end_before_leading_zone(
         y_sorted,
         profile_spec,
+        None if creep_weight is None else creep_weight[order],
     )
     rupture_fit = optional_linear_arrival_fit(
         y_sorted,
@@ -527,6 +558,7 @@ def plot_mu_eff_maps(
         rupture_arrival_sorted,
         rupture_fit,
         fit_end=rupture_fit_end,
+        excluded_zone="creep" if leading_creep_start is not None else "VS",
     )
     _add_wave_speed_guides(
         ax_shear,
@@ -555,6 +587,7 @@ def plot_mu_eff_maps(
         "shear_wave_speed_m_per_s": wave_speeds["c_s"],
         "rupture_fit_interval_mm": [RUPTURE_FIT_START_MM, rupture_fit_end],
         "rupture_fit_leading_vs_start_mm": leading_vs_start,
+        "rupture_fit_leading_creep_start_mm": leading_creep_start,
         "rupture_fit_arrival_definition": "first post-shear cumulative slip = D_c",
         "rupture_fit_spatial_median_width_mm": RUPTURE_ARRIVAL_SPATIAL_MEDIAN_MM,
         "rupture_fit_available": bool(rupture_fit["available"]),

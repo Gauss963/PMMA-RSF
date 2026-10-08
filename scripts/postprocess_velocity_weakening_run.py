@@ -122,6 +122,32 @@ def main() -> int:
             missing_only=args.missing_only,
         )
     )
+    zoom_stem = "rupture_arrival_zoom"
+    zoom_paths = [
+        plot_dir / f"{zoom_stem}.pdf",
+        plot_dir / f"{zoom_stem}.png",
+        stats_dir / f"{zoom_stem}.json",
+    ]
+    tasks.append(
+        run_subprocess_task(
+            "rupture_arrival_zoom",
+            [
+                sys.executable,
+                str(SRC_DIR / "plot_rupture_arrival_zoom.py"),
+                "--input",
+                str(input_path),
+                "--output",
+                str(zoom_paths[0]),
+                "--stats-dir",
+                str(stats_dir),
+                "--dpi",
+                str(args.dpi),
+            ],
+            expected_outputs=zoom_paths,
+            cwd=REPO_ROOT,
+            missing_only=args.missing_only,
+        )
+    )
     mu_disp_path = plot_dir / "contact_mu_disp.pdf"
     tasks.append(
         run_callable_task(
