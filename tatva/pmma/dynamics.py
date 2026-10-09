@@ -99,6 +99,9 @@ class RunConfig:
     normal_displacement_leading_fraction: float = 1.0
     shear_loading_mode: str = "stress"
     shear_loading_stiffness: float | None = None
+    # Spring loading through a rigid platen: the loaded face moves as one body
+    # (uniform y displacement) instead of carrying a uniform spring traction.
+    shear_spring_rigid_face: bool = False
     mu_k_override: float | None = None
     critical_slip_override: float | None = None
     loading_edge_nucleation_length: float = 0.0
@@ -113,6 +116,9 @@ class RunConfig:
     tau_k_full_fraction_override: float | None = None
     shear_ramp_time: float | None = None
     shear_ramp_shape: str = "linear"
+    # Two-stage loading: after the shear ramp the actuator keeps advancing at this
+    # rate [mm/s] instead of holding (0 keeps the historical hold).
+    shear_post_ramp_rate: float = 0.0
     normal_relaxation_time: float | None = None
     normal_relaxation_start_time: float = 0.0
     prestress_shear_displacement: float | None = None
@@ -1510,6 +1516,9 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         raise ValueError(
             "spring-displacement loading requires a positive shear_loading_stiffness."
         )
+    shear_spring_rigid_face = bool(config.shear_spring_rigid_face)
+    if shear_spring_rigid_face and shear_loading_mode != "spring-displacement":
+        raise ValueError("shear_spring_rigid_face requires shear_loading_mode='spring-displacement'.")
     shear_displacement_k = (
         0.0
         if config.shear_displacement_k_override is None
@@ -1536,6 +1545,14 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
             "shear_ramp_shape must be 'linear', 'smoothstep', or 'half-cosine', "
             f"got {config.shear_ramp_shape!r}."
         )
+    shear_post_ramp_rate = float(config.shear_post_ramp_rate)
+    if not math.isfinite(shear_post_ramp_rate) or shear_post_ramp_rate < 0.0:
+        raise ValueError("shear_post_ramp_rate must be a finite, non-negative rate in mm/s.")
+    if shear_post_ramp_rate > 0.0 and shear_loading_mode not in {
+        "displacement",
+        "spring-displacement",
+    }:
+        raise ValueError("shear_post_ramp_rate requires displacement or spring-displacement loading.")
     quasistatic_shear_fraction = float(config.quasistatic_shear_fraction)
     quasistatic_shear_start_time = float(config.quasistatic_shear_start_time)
     quasistatic_shear_ramp_time = float(config.quasistatic_shear_ramp_time)
@@ -1791,6 +1808,12 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
             + (shear_displacement_s - quasistatic_shear_target)
             * shear_ramp_progress
         )
+    if shear_post_ramp_rate > 0.0:
+        # Integer step counts keep the slow stage exact over millions of float32 steps.
+        steps_after_ramp = np.arange(1, shear_steps - shear_ramp_steps + 1, dtype=np.float64)
+        shear_displacement_shear[shear_ramp_steps:] = (
+            shear_displacement_s + shear_post_ramp_rate * steps_after_ramp * dt
+        ).astype(scalar_dtype)
     if shear_loading_mode in {"displacement", "spring-displacement"}:
         pressure_schedule[:] = 0.0
         shear_schedule[:] = 0.0
@@ -1852,6 +1875,10 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         disp_now = shear_displacement_shear[idx]
         shear_velocity_shear[idx] = (disp_now - prev_disp) / dt
         prev_disp = disp_now
+    if shear_post_ramp_rate > 0.0:
+        # Slow-stage increments can fall below the float32 spacing of the stored
+        # displacement, so differencing would alternate 0 and one ulp/dt.
+        shear_velocity_shear[shear_ramp_steps:] = shear_post_ramp_rate
 
     return {
         "dtype": dtype,
@@ -2017,6 +2044,8 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         "shear_time": float(shear_time),
         "shear_ramp_time": float(shear_ramp_time),
         "shear_ramp_shape": shear_ramp_shape,
+        "shear_post_ramp_rate": shear_post_ramp_rate,
+        "shear_spring_rigid_face": shear_spring_rigid_face,
         "stop_shear_loading_on_rupture": bool(
             config.stop_shear_loading_on_rupture
         ),
@@ -2094,6 +2123,10 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
     shear_loading_mode = str(model["shear_loading_mode"])
     use_shear_displacement = shear_loading_mode == "displacement"
     use_shear_spring = shear_loading_mode == "spring-displacement"
+    if model.get("shear_spring_rigid_face", False):
+        raise NotImplementedError(
+            "shear_spring_rigid_face is implemented only in run_simulation_dumped."
+        )
     shear_loading_stiffness = jnp.asarray(
         0.0
         if model["shear_loading_stiffness"] is None
@@ -2706,6 +2739,8 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         "normal_ramp_steps": model["normal_ramp_steps"],
         "shear_ramp_time": model["shear_ramp_time"],
         "shear_ramp_shape": model["shear_ramp_shape"],
+        "shear_post_ramp_rate": model["shear_post_ramp_rate"],
+        "shear_spring_rigid_face": model["shear_spring_rigid_face"],
         "stop_shear_loading_on_rupture": model[
             "stop_shear_loading_on_rupture"
         ],
@@ -2974,6 +3009,10 @@ def run_simulation_dumped(
         else model["shear_loading_stiffness"],
         dtype=dtype,
     )
+    # Spring force per unit thickness = spring traction x loaded face length.
+    shear_loading_face_length = jnp.sum(model["force_shear_unit"])
+    rigid_loading_face = bool(model["shear_spring_rigid_face"])
+    loading_face_mass = jnp.sum(model["mass_flat"][model["moving_shear_loading_dofs"]])
     stop_shear_loading = bool(model["stop_shear_loading_on_rupture"])
     shear_loading_stop_slip = jnp.asarray(
         model["shear_loading_stop_slip"], dtype=dtype
@@ -3356,8 +3395,14 @@ def run_simulation_dumped(
         unconstrained_shear_force = jnp.sum(
             net_force[prescribed_shear_dofs]
         )
+        nodal_accel = net_force / mass_flat
+        if rigid_loading_face:
+            # Rigid platen: the face translates with (total face force) / (face mass).
+            nodal_accel = nodal_accel.at[moving_shear_loading_dofs].set(
+                jnp.sum(net_force[moving_shear_loading_dofs]) / loading_face_mass
+            )
         accel = zero_constrained_dofs(
-            net_force / mass_flat,
+            nodal_accel,
             zero_dofs,
             prescribed_dofs,
         )
@@ -3643,19 +3688,30 @@ def run_simulation_dumped(
                 ),
             ]
         )
+        if rigid_loading_face:
+            # Contact corrections at the face/fault corner are shared by the whole
+            # platen (momentum-conserving), keeping the face a single rigid body.
+            face_mass = mass_flat[moving_shear_loading_dofs]
+            v_half_new = v_half_new.at[moving_shear_loading_dofs].set(
+                jnp.sum(face_mass * v_half_new[moving_shear_loading_dofs]) / loading_face_mass
+            )
         v_half_new = apply_constraints(
             v_half_new,
             zero_dofs,
             prescribed_dofs,
             final_prescribed_velocities,
         )
-        diag["shear_boundary_reaction"] = (
+        # A spring-loaded face is unconstrained, so report the spring force instead
+        # of a constraint reaction; work and energy analyses read this column.
+        diag["shear_boundary_reaction"] = jnp.where(
+            use_shear_spring,
+            diag["applied_shear"] * shear_loading_face_length,
             jnp.sum(
                 mass_flat[prescribed_shear_dofs]
                 * (v_half_new[prescribed_shear_dofs] - v_half[prescribed_shear_dofs])
                 / dt
             )
-            - diag["unconstrained_shear_force"]
+            - diag["unconstrained_shear_force"],
         )
         kinetic = 0.5 * jnp.sum(mass_flat * v_half_new**2)
         output = make_row(
@@ -4211,6 +4267,8 @@ def run_simulation_dumped(
             h5.attrs["normal_ramp_steps"] = model["normal_ramp_steps"]
             h5.attrs["shear_ramp_time"] = model["shear_ramp_time"]
             h5.attrs["shear_ramp_shape"] = model["shear_ramp_shape"]
+            h5.attrs["shear_post_ramp_rate"] = model["shear_post_ramp_rate"]
+            h5.attrs["shear_spring_rigid_face"] = int(model["shear_spring_rigid_face"])
             h5.attrs["normal_loading_mode"] = model["normal_loading_mode"]
             h5.attrs["shear_loading_mode"] = model["shear_loading_mode"]
             h5.attrs["shear_force_boundary"] = model["shear_force_boundary"]
@@ -5055,6 +5113,8 @@ def run_simulation_dumped(
         "normal_ramp_steps": model["normal_ramp_steps"],
         "shear_ramp_time": model["shear_ramp_time"],
         "shear_ramp_shape": model["shear_ramp_shape"],
+        "shear_post_ramp_rate": model["shear_post_ramp_rate"],
+        "shear_spring_rigid_face": model["shear_spring_rigid_face"],
         "stop_shear_loading_on_rupture": model[
             "stop_shear_loading_on_rupture"
         ],
