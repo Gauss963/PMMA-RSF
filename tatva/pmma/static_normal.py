@@ -54,8 +54,16 @@ def _block_stiffness(block, material) -> sps.csr_matrix:
     return sps.csr_matrix(matrix)
 
 
-def solve_static_normal_phase(model: dict[str, Any], config, *, max_iterations: int = 100) -> dict[str, Any]:
-    """Return the static end-of-normal-loading state as float64 arrays."""
+def solve_static_normal_phase(model: dict[str, Any], config, *, max_iterations: int = 100,
+                              actuator_displacement: float = 0.0,
+                              plastic_slip: np.ndarray | None = None) -> dict[str, Any]:
+    """Return the static end-of-normal-loading state as float64 arrays.
+
+    ``actuator_displacement`` (rigid-platen spring only) adds a static shear preload,
+    used for diagnostics such as where the stuck fault first reaches mu_s.
+    ``plastic_slip`` gives stuck pairs a stress-free tangential offset (restart from a
+    previous event on a healed fault); sliding pairs replace it by the Coulomb value.
+    """
     if int(config.dimension) != 2:
         raise NotImplementedError("The static normal phase is implemented for 2-D models.")
     if model["normal_loading_mode"] != "stress":
@@ -85,6 +93,7 @@ def solve_static_normal_phase(model: dict[str, Any], config, *, max_iterations: 
     sx, sy = offset + 2 * slave, offset + 2 * slave + 1
     force = np.asarray(model["force_normal"], dtype=np.float64)
     gap = np.asarray(model["interface_initial_gap"], dtype=np.float64)
+    stuck_offset = np.zeros(master.size) if plastic_slip is None else np.asarray(plastic_slip, dtype=np.float64)
 
     # Degrees of freedom: Dirichlet supports, plus the shear face (locked, or one rigid platen).
     fixed = set(np.asarray(model["fixed_dofs"], dtype=np.int64).tolist())
@@ -139,16 +148,21 @@ def solve_static_normal_phase(model: dict[str, Any], config, *, max_iterations: 
             matrix = matrix + sps.csc_matrix(([spring], ([platen], [platen])), shape=matrix.shape)
         # Overlap = u_mx - u_sx - gap: the gap of active pairs moves to the right-hand side.
         rhs = force.copy()
+        if rigid_face and actuator_displacement:
+            # Spring force k (u_a - u_face): the u_a part is an external load on the platen.
+            rhs[face] += spring * actuator_displacement / face.size
         np.add.at(rhs, mx, normal * gap)
         np.add.at(rhs, sx, -normal * gap)
         np.add.at(rhs, my, slide * gap)
         np.add.at(rhs, sy, -slide * gap)
+        np.add.at(rhs, my, tangential * stuck_offset)   # stuck: tau = kt (tangent - stuck_offset)
+        np.add.at(rhs, sy, -tangential * stuck_offset)
         q = spla.spsolve(matrix, transform.T @ rhs)
         u = transform @ q
         overlap = u[mx] - u[sx] - gap
         tangent = u[my] - u[sy]
         sigma = kn * overlap
-        trial = kt * tangent  # stuck nodes carry no plastic slip
+        trial = kt * (tangent - stuck_offset)
         new_contact = overlap > 0.0
         new_sliding = new_contact & (np.abs(trial) > mu_s * sigma)
         new_direction = np.where(new_sliding, np.sign(trial), 0.0)
@@ -162,8 +176,8 @@ def solve_static_normal_phase(model: dict[str, Any], config, *, max_iterations: 
         raise RuntimeError(f"Static normal phase did not converge in {max_iterations} iterations: {history[-3:]}")
 
     sigma = np.where(in_contact, sigma, 0.0)  # open pairs carry no traction
-    tau = np.where(sliding, direction * mu_s * sigma, kt * tangent) * in_contact
-    plastic = np.where(sliding, tangent - tau / kt, 0.0)
+    tau = np.where(sliding, direction * mu_s * sigma, kt * (tangent - stuck_offset)) * in_contact
+    plastic = np.where(sliding, tangent - tau / kt, stuck_offset)
     residual = stiffness @ u + contact @ u - rhs
     if rigid_face:
         residual[face] += spring * u[face[0]] / face.size

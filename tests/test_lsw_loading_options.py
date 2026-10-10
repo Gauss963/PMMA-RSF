@@ -265,3 +265,86 @@ def test_filleted_refined_dynamics_holds_static_start(tmp_path):
         normal = h5["phase_id"][:] == 1
     kinetic = history[normal, columns.index("kinetic_energy")]
     assert kinetic.max() < 1e-4 * history[normal, columns.index("elastic_energy")].max()
+
+
+def test_restart_continues_from_previous_final_state(tmp_path):
+    case, cfg, _, _ = load_lsw_case(SOURCE)
+    first_cfg = _static_spring_cfg(cfg, shear_displacement_s_override=0.05)
+    first = tmp_path / "first.h5"
+    run_simulation_dumped(case, first_cfg, first, frames_per_phase=4, shear_frames_per_phase=4,
+                          include_initial_frame=True)
+    with h5py.File(first) as h5:
+        final = h5["final_state"]
+        actuator = float(final.attrs["applied_shear_displacement"])
+        plastic = np.asarray(final["plastic_slip"])
+        assert final["u"].shape[0] == int(h5["moving/displacement"].shape[1] * 2
+                                         + h5["stationary/displacement"].shape[1] * 2)
+    assert actuator == pytest.approx(0.05, rel=1e-6)
+
+    second_cfg = _static_spring_cfg(cfg, shear_displacement_s_override=0.0, shear_ramp_time=0.0,
+                                    shear_post_ramp_rate=10.0, restart_from_file=str(first))
+    model = build_case_model(case, second_cfg)
+    schedule = np.asarray(model["shear_displacement_shear"], dtype=np.float64)
+    dt = float(model["dt"])
+    np.testing.assert_allclose(schedule, actuator + 10.0 * dt * np.arange(1, schedule.size + 1), rtol=1e-6)
+    np.testing.assert_allclose(np.asarray(model["shear_displacement_pressure"]), actuator, rtol=1e-6)
+    second = tmp_path / "second.h5"
+    result = run_simulation_dumped(case, second_cfg, second, frames_per_phase=4,
+                                   shear_frames_per_phase=4, include_initial_frame=True)
+    with h5py.File(second) as h5:
+        assert h5.attrs["restart_actuator_displacement"] == pytest.approx(actuator)
+        normal = h5["phase_id"][:] == 1
+        start_plastic = h5["interface/plastic_slip"][0]
+    # Stuck pairs keep the earlier plastic offset (none slide at mu_s on this short case);
+    # on this coarse mesh every pair is also a plotted interface node.
+    assert start_plastic.size == plastic.size
+    np.testing.assert_allclose(start_plastic, plastic, atol=1e-9)
+    columns = list(result["columns"])
+    history = np.asarray(result["history"], dtype=np.float64)
+    kinetic = history[normal, columns.index("kinetic_energy")]
+    assert kinetic.max() < 1e-4 * history[normal, columns.index("elastic_energy")].max()
+
+
+def test_restart_requires_static_spring_start(tmp_path):
+    case, cfg, _, _ = load_lsw_case(SOURCE)
+    with pytest.raises(ValueError, match="restart_from_file"):
+        build_case_model(case, _short(cfg, restart_from_file=str(tmp_path / "missing.h5")))
+
+
+def test_shear_loading_face_gap_leaves_a_free_strip_at_the_fault():
+    case, cfg, _, _ = load_lsw_case(SOURCE)
+    full = build_case_model(case, _short(cfg, mesh_size=5.0))
+    gapped = build_case_model(case, _short(cfg, mesh_size=5.0, shear_loading_face_gap=5.0))
+    coords = np.asarray(gapped["moving"].mesh.coords)
+    loaded = np.asarray(gapped["moving_shear_loading_dofs"]) // 2
+    assert coords[loaded, 0].max() == pytest.approx(195.0)
+    assert np.all(coords[loaded, 1] == 0.0)
+    assert np.asarray(gapped["moving_shear_edge_dofs"]).size == loaded.size
+    assert float(np.sum(gapped["force_shear_unit"])) == pytest.approx(195.0)
+    assert float(np.sum(full["force_shear_unit"])) == pytest.approx(200.0)
+    assert gapped["shear_loading_face_width"] == pytest.approx(195.0)
+    corner = np.flatnonzero((coords[:, 0] == 200.0) & (coords[:, 1] == 0.0))
+    assert np.asarray(gapped["force_shear_unit"])[2 * corner + 1] == 0.0
+
+
+def test_contact_time_step_is_per_pair_only_on_refined_meshes():
+    case, cfg, _, _ = load_lsw_case(SOURCE)
+    uniform = build_case_model(case, _short(cfg, mesh_size=5.0, time_step_override=None))
+    masses = np.asarray(uniform["mass_flat"], dtype=np.float64)
+    fixed = np.asarray(uniform["fixed_dofs"])
+    free = np.setdiff1d(np.arange(masses.size), fixed)
+    weights = np.asarray(uniform["interface_weights"], dtype=np.float64)
+    global_bound = 0.25 * np.sqrt(masses[free].min() / float(uniform["penalty_n"]) / weights.max())
+    assert float(uniform["dt_contact"]) == pytest.approx(global_bound, rel=1e-6)
+
+    refined = build_case_model(case, _short(cfg, mesh_size=5.0, time_step_override=None,
+                                            fault_end_refinement_size=0.5))
+    masses = np.asarray(refined["mass_flat"], dtype=np.float64)
+    master = np.asarray(refined["master_nodes"]); slave = np.asarray(refined["slave_nodes"])
+    offset = int(refined["moving_offset"])
+    pair_mass = np.minimum(masses[2 * master], masses[offset + 2 * slave])
+    weights = np.asarray(refined["interface_weights"], dtype=np.float64)
+    per_pair = 0.25 * np.sqrt(np.min(pair_mass / (2.0 * float(refined["penalty_n"]) * weights)))
+    assert float(refined["dt_contact"]) == pytest.approx(per_pair, rel=1e-6)
+    free = np.setdiff1d(np.arange(masses.size), np.asarray(refined["fixed_dofs"]))
+    assert per_pair > 0.25 * np.sqrt(masses[free].min() / float(refined["penalty_n"]) / weights.max())

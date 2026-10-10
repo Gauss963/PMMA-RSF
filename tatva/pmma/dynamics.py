@@ -100,6 +100,10 @@ class RunConfig:
     # Local refinement around both fault ends (rows) and the fault plane (columns) of
     # both blocks: element size grows geometrically from this size [mm] to mesh_size.
     fault_end_refinement_size: float | None = None
+    # Free strip [mm] between the shear-loading platen and the fault plane: the platen
+    # (prescribed displacement, spring, rigid face, normal-phase lock) only acts on the
+    # part of the loading face at least this far from the fault (experiment: 5 mm).
+    shear_loading_face_gap: float = 0.0
     fault_end_refinement_growth: float = 1.2
     normal_loading_mode: str = "stress"
     normal_displacement_override: float | None = None
@@ -120,6 +124,10 @@ class RunConfig:
     # static end-of-normal-loading equilibrium (tatva.pmma.static_normal), so the
     # normal phase is only an explicit hold at full load (normal_ramp_time = 0).
     normal_phase_mode: str = "dynamic"
+    # Restart from a previous run's final_state (e.g. a second event): the static
+    # start keeps that run's plastic slip on the healed fault at its actuator
+    # position, and the actuator schedule continues from there.
+    restart_from_file: str | None = None
     mu_k_override: float | None = None
     critical_slip_override: float | None = None
     loading_edge_nucleation_length: float = 0.0
@@ -1272,8 +1280,34 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         )
         * normal_displacement_coordinate
     ).astype(dtype)
+    shear_face_nodes = np.asarray(moving.boundary_nodes["moving-block-right"])
+    shear_face_segments = np.asarray(moving.boundary_segments["moving-block-right"])
+    shear_loading_face_gap = float(config.shear_loading_face_gap)
+    if shear_loading_face_gap < 0.0:
+        raise ValueError("shear_loading_face_gap must be non-negative.")
+    if shear_loading_face_gap > 0.0:
+        if dimension != 2:
+            raise ValueError("shear_loading_face_gap is implemented for 2-D models.")
+        fault_x = float(case.moving.origin[0] + case.moving.dimensions[0])
+        face_x = np.asarray(moving.mesh.coords, dtype=np.float64)[:, 0]
+        loaded = face_x[shear_face_nodes] <= fault_x - shear_loading_face_gap + 1.0e-9
+        if loaded.sum() < 2:
+            raise ValueError("shear_loading_face_gap leaves fewer than two loaded nodes.")
+        loaded_set = set(shear_face_nodes[loaded].tolist())
+        shear_face_segments = shear_face_segments[
+            [a in loaded_set and b in loaded_set for a, b in shear_face_segments]
+        ]
+        shear_face_nodes = shear_face_nodes[loaded]
+    shear_loading_face_weights = (
+        moving.boundary_weights["moving-block-right"]
+        if shear_loading_face_gap == 0.0
+        else boundary_weights(moving.mesh, jnp.asarray(shear_face_segments), dtype)
+    )
+    shear_loading_face_width = float(
+        np.ptp(np.asarray(moving.mesh.coords, dtype=np.float64)[shear_face_nodes, 0])
+    )
     moving_shear_edge_dofs = make_global_dof_indices(
-        moving.boundary_nodes["moving-block-right"],
+        jnp.asarray(shear_face_nodes, dtype=jnp.int32),
         0,
         1,
         dimension,
@@ -1306,7 +1340,7 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
             1,
             dimension,
         )
-    ].add(moving.boundary_weights["moving-block-right"])
+    ].add(shear_loading_face_weights)
 
     master_nodes, slave_nodes = match_interface_nodes(
         moving,
@@ -1526,6 +1560,19 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
     dt_contact = config.contact_safety_factor * math.sqrt(
         min_mass / max_contact_penalty / max_interface_weight
     )
+    if config.fault_end_refinement_size is not None:
+        # The global bound pairs the smallest nodal mass anywhere with the largest
+        # interface weight, which on a graded mesh come from different nodes and
+        # make dt scale with the finest size. Bound each contact pair by its own
+        # masses and weight instead; the factor 2 makes it equal the global bound on
+        # a uniform mesh (end pairs: quarter mass, half weight).
+        pair_mass = jnp.minimum(
+            mass_flat[dimension * master_nodes],
+            mass_flat[moving_offset + dimension * slave_nodes],
+        )
+        dt_contact = config.contact_safety_factor * float(jnp.sqrt(jnp.min(
+            pair_mass / (2.0 * max_contact_penalty * interface_weights)
+        )))
     stable_dt = min(dt_bulk, dt_contact)
     stability_limiter = "bulk" if dt_bulk <= dt_contact else "contact"
     if (
@@ -1664,6 +1711,22 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
                 "normal_phase_mode='static' resolves the normal phase at mu_s, so it requires "
                 "reset_slip_weakening_at_shear_start = true."
             )
+    restart_state = None
+    if config.restart_from_file is not None:
+        if normal_phase_mode != "static" or shear_loading_mode != "spring-displacement":
+            raise ValueError("restart_from_file needs normal_phase_mode='static' and spring-displacement loading.")
+        import h5py
+
+        with h5py.File(Path(config.restart_from_file).expanduser(), "r") as restart_h5:
+            if "final_state" not in restart_h5:
+                raise ValueError(f"No final_state in {config.restart_from_file}; the run did not complete.")
+            group = restart_h5["final_state"]
+            restart_state = {
+                "u": np.asarray(group["u"], dtype=np.float64),
+                "plastic_slip": np.asarray(group["plastic_slip"], dtype=np.float64),
+                "actuator": float(group.attrs["applied_shear_displacement"]),
+                "source": str(Path(config.restart_from_file).expanduser().resolve()),
+            }
     if reset_slip_weakening_at_shear_start and config.friction_law != "slip-weakening":
         raise ValueError("reset_slip_weakening_at_shear_start requires friction_law='slip-weakening'.")
     if shear_spring_rigid_face and shear_loading_mode != "spring-displacement":
@@ -2028,6 +2091,10 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         # Slow-stage increments can fall below the float32 spacing of the stored
         # displacement, so differencing would alternate 0 and one ulp/dt.
         shear_velocity_shear[shear_ramp_steps:] = shear_post_ramp_rate
+    if restart_state is not None:
+        # Continue from the previous actuator position; velocities are unchanged.
+        shear_displacement_pressure = shear_displacement_pressure + scalar_dtype(restart_state["actuator"])
+        shear_displacement_shear = shear_displacement_shear + scalar_dtype(restart_state["actuator"])
 
     return {
         "dtype": dtype,
@@ -2059,6 +2126,8 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         "interface_plot_slave_nodes": interface_plot_slave_nodes,
         "interface_weights": interface_weights,
         "interface_initial_gap": interface_initial_gap,
+        "shear_loading_face_gap": shear_loading_face_gap,
+        "shear_loading_face_width": shear_loading_face_width,
         "moving_leading_fault_fillet_radius": float(config.moving_leading_fault_fillet_radius),
         "moving_loading_fault_fillet_radius": float(config.moving_loading_fault_fillet_radius),
         "fault_end_refinement_size": (None if config.fault_end_refinement_size is None
@@ -2203,6 +2272,7 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         "shear_spring_rigid_face": shear_spring_rigid_face,
         "reset_slip_weakening_at_shear_start": reset_slip_weakening_at_shear_start,
         "normal_phase_mode": normal_phase_mode,
+        "restart_state": restart_state,
         "stop_shear_loading_on_rupture": bool(
             config.stop_shear_loading_on_rupture
         ),
@@ -3634,7 +3704,15 @@ def run_simulation_dumped(
     if model["normal_phase_mode"] == "static" and not resume:
         from .static_normal import solve_static_normal_phase
 
-        static_state = solve_static_normal_phase(model, config)
+        restart = model["restart_state"]
+        if restart is not None and (restart["u"].size != total_dofs
+                                    or restart["plastic_slip"].size != master_nodes.shape[0]):
+            raise ValueError("restart_from_file was produced on a different mesh.")
+        static_state = solve_static_normal_phase(
+            model, config,
+            actuator_displacement=0.0 if restart is None else restart["actuator"],
+            plastic_slip=None if restart is None else restart["plastic_slip"],
+        )
         u0 = jnp.asarray(static_state["u"], dtype=dtype)
         plastic0 = jnp.asarray(static_state["plastic_slip"], dtype=dtype)
         # The static state is resolved with the undamaged strength mu_s, so its end
@@ -4471,6 +4549,9 @@ def run_simulation_dumped(
                 model["reset_slip_weakening_at_shear_start"]
             )
             h5.attrs["normal_phase_mode"] = model["normal_phase_mode"]
+            if model["restart_state"] is not None:
+                h5.attrs["restart_from_file"] = model["restart_state"]["source"]
+                h5.attrs["restart_actuator_displacement"] = model["restart_state"]["actuator"]
             for name, value in static_normal_summary.items():
                 h5.attrs[f"static_normal_{name}"] = value
             h5.attrs["normal_loading_mode"] = model["normal_loading_mode"]
@@ -4548,6 +4629,8 @@ def run_simulation_dumped(
                 "leading_edge_creep_relaxation_time"
             ]
             h5.attrs["moving_leading_fault_fillet_radius"] = model["moving_leading_fault_fillet_radius"]
+            h5.attrs["shear_loading_face_gap"] = model["shear_loading_face_gap"]
+            h5.attrs["shear_loading_face_width"] = model["shear_loading_face_width"]
             h5.attrs["moving_loading_fault_fillet_radius"] = model["moving_loading_fault_fillet_radius"]
             h5.attrs["fault_end_refinement_size"] = float(model["fault_end_refinement_size"] or 0.0)
             h5.attrs["fault_end_refinement_growth"] = model["fault_end_refinement_growth"]
@@ -5205,6 +5288,16 @@ def run_simulation_dumped(
             h5.attrs["saved_interface_frames"] = (
                 interface_frame_count if separate_interface_output else frame_count
             )
+            # Full end state (all pairs, not only plotted ones) so a later run can
+            # restart from it, e.g. a second event after healing.
+            if "final_state" in h5:
+                del h5["final_state"]
+            final_group = h5.create_group("final_state")
+            for name, index in (("u", 0), ("v_half", 1), ("plastic_slip", 2), ("cumulative_slip", 3)):
+                final_group.create_dataset(name, data=np.asarray(carry[index], dtype=np.float64))
+            final_group.attrs["applied_shear_displacement"] = float(carry[11])
+            final_group.attrs["time"] = float(carry[9])
+            final_group.attrs["loading_stopped"] = int(bool(carry[10]))
 
     if checkpoint_path is not None and mpi_context.is_root:
         checkpoint_path.unlink(missing_ok=True)
