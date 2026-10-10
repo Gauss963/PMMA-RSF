@@ -43,6 +43,10 @@ def main():
     mpi = get_mpi_context()
     source = args.input.resolve()
     case, cfg, output, description = load_lsw_case(source)
+    if cfg.dtype == "float64":
+        # Must precede any JAX array creation, or float64 is silently truncated.
+        import jax
+        jax.config.update("jax_enable_x64", True)
     if args.mesh_size is not None:
         if not args.benchmark_steps:
             raise ValueError("Mesh overrides are restricted to benchmarks.")

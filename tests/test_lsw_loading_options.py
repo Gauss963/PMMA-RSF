@@ -170,3 +170,13 @@ def test_static_normal_requires_zero_ramp_and_shear_only_weakening():
                                       reset_slip_weakening_at_shear_start=True))
     with pytest.raises(ValueError, match="reset_slip_weakening_at_shear_start"):
         build_case_model(case, _short(cfg, normal_phase_mode="static", normal_ramp_time=0.0))
+
+
+def test_float64_requires_x64_instead_of_silently_truncating():
+    import jax
+
+    case, cfg, _, _ = load_lsw_case(SOURCE)
+    if jax.config.read("jax_enable_x64"):
+        pytest.skip("x64 already enabled in this process")
+    with pytest.raises(ValueError, match="x64"):
+        build_case_model(case, _short(cfg, dtype="float64"))

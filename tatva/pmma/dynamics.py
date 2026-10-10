@@ -1031,6 +1031,11 @@ def _shear_loading_stop_reached(
 
 def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
     dtype = jnp.float32 if config.dtype == "float32" else jnp.float64
+    if dtype == jnp.float64 and not jax.config.read("jax_enable_x64"):
+        raise ValueError(
+            "dtype='float64' needs JAX x64 enabled before the model is built "
+            "(run_simulation_dumped does this; otherwise set JAX_ENABLE_X64=1)."
+        )
     dimension = int(config.dimension)
     if dimension not in (2, 3):
         raise ValueError(f"Unsupported dimension {dimension}")
@@ -2940,7 +2945,9 @@ def run_simulation_dumped(
 
     if rsf_state_dtype not in {None, "float32", "float64"}:
         raise ValueError("Unsupported RSF state precision.")
-    if rsf_state_dtype == "float64":
+    if rsf_state_dtype == "float64" or config.dtype == "float64":
+        # A float64 bulk needs x64 before the model is built, or JAX silently
+        # truncates every array to float32.
         jax.config.update("jax_enable_x64", True)
 
     checkpoint_path = (
