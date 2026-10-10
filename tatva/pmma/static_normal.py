@@ -84,6 +84,7 @@ def solve_static_normal_phase(model: dict[str, Any], config, *, max_iterations: 
     mx, my = 2 * master, 2 * master + 1
     sx, sy = offset + 2 * slave, offset + 2 * slave + 1
     force = np.asarray(model["force_normal"], dtype=np.float64)
+    gap = np.asarray(model["interface_initial_gap"], dtype=np.float64)
 
     # Degrees of freedom: Dirichlet supports, plus the shear face (locked, or one rigid platen).
     fixed = set(np.asarray(model["fixed_dofs"], dtype=np.int64).tolist())
@@ -110,7 +111,7 @@ def solve_static_normal_phase(model: dict[str, Any], config, *, max_iterations: 
     spring = 0.0
     if rigid_face:
         spring = float(model["shear_loading_stiffness"]) * float(np.sum(model["force_shear_unit"]))
-    in_contact = np.ones(master.size, dtype=bool)
+    in_contact = gap <= 0.0
     sliding = np.zeros(master.size, dtype=bool)
     direction = np.zeros(master.size)
     history = []
@@ -136,9 +137,15 @@ def solve_static_normal_phase(model: dict[str, Any], config, *, max_iterations: 
         if rigid_face:
             platen = int(column[face[0]])
             matrix = matrix + sps.csc_matrix(([spring], ([platen], [platen])), shape=matrix.shape)
-        q = spla.spsolve(matrix, transform.T @ force)
+        # Overlap = u_mx - u_sx - gap: the gap of active pairs moves to the right-hand side.
+        rhs = force.copy()
+        np.add.at(rhs, mx, normal * gap)
+        np.add.at(rhs, sx, -normal * gap)
+        np.add.at(rhs, my, slide * gap)
+        np.add.at(rhs, sy, -slide * gap)
+        q = spla.spsolve(matrix, transform.T @ rhs)
         u = transform @ q
-        overlap = u[mx] - u[sx]
+        overlap = u[mx] - u[sx] - gap
         tangent = u[my] - u[sy]
         sigma = kn * overlap
         trial = kt * tangent  # stuck nodes carry no plastic slip
@@ -154,9 +161,10 @@ def solve_static_normal_phase(model: dict[str, Any], config, *, max_iterations: 
     else:
         raise RuntimeError(f"Static normal phase did not converge in {max_iterations} iterations: {history[-3:]}")
 
+    sigma = np.where(in_contact, sigma, 0.0)  # open pairs carry no traction
     tau = np.where(sliding, direction * mu_s * sigma, kt * tangent) * in_contact
     plastic = np.where(sliding, tangent - tau / kt, 0.0)
-    residual = stiffness @ u + contact @ u - force
+    residual = stiffness @ u + contact @ u - rhs
     if rigid_face:
         residual[face] += spring * u[face[0]] / face.size
     free_residual = transform.T @ residual

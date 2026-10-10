@@ -93,6 +93,14 @@ class RunConfig:
     moving_loading_extension_length: float = 0.0
     moving_leading_chamfer_along_fault: float = 0.0
     moving_leading_chamfer_perpendicular: float = 0.0
+    # Quarter-circle fillets on the moving block's fault corners [mm], tangent to the
+    # fault; contact pairs on the fillet start with the geometric normal gap.
+    moving_leading_fault_fillet_radius: float = 0.0
+    moving_loading_fault_fillet_radius: float = 0.0
+    # Local refinement around both fault ends (rows) and the fault plane (columns) of
+    # both blocks: element size grows geometrically from this size [mm] to mesh_size.
+    fault_end_refinement_size: float | None = None
+    fault_end_refinement_growth: float = 1.2
     normal_loading_mode: str = "stress"
     normal_displacement_override: float | None = None
     normal_displacement_loading_fraction: float = 1.0
@@ -215,6 +223,47 @@ def _axis_coordinates(start: float, length: float, mesh_size: float, dtype: jnp.
     return jnp.asarray(coords, dtype=dtype)
 
 
+def _graded_segment(a: float, b: float, mesh_size: float, fine_size: float, growth: float,
+                    fine_at_a: bool, fine_at_b: bool) -> list[float]:
+    """Node positions on [a, b]: geometric growth from fine_size at refined ends up to
+    mesh_size, uniform in between. Deterministic, so equal inputs give equal nodes."""
+    def ramp() -> list[float]:
+        sizes, size = [], fine_size
+        while size < mesh_size:
+            sizes.append(size)
+            size *= growth
+        return sizes
+
+    left = ramp() if fine_at_a else []
+    right = ramp() if fine_at_b else []
+    length = b - a
+    while left or right:
+        if sum(left) + sum(right) <= 0.9 * length:
+            break
+        (left if len(left) >= len(right) else right).pop()
+    middle = length - sum(left) - sum(right)
+    n_middle = max(1, int(math.ceil(middle / mesh_size - 1e-9)))
+    sizes = left + [middle / n_middle] * n_middle + right[::-1]
+    nodes = [a]
+    for size in sizes[:-1]:
+        nodes.append(nodes[-1] + size)
+    nodes.append(b)
+    return nodes
+
+
+def _graded_axis_coordinates(start: float, length: float, mesh_size: float, fine_size: float,
+                             growth: float, points: list[float], dtype: jnp.dtype) -> jax.Array:
+    """Axis refined to fine_size around each point of `points` that lies in [start, end]."""
+    end = start + length
+    inside = sorted({float(p) for p in points if start - 1e-9 <= p <= end + 1e-9})
+    breaks = sorted({start, end, *inside})
+    is_fine = lambda value: any(math.isclose(value, p, abs_tol=1e-9) for p in inside)
+    nodes = [start]
+    for a, b in zip(breaks[:-1], breaks[1:]):
+        nodes.extend(_graded_segment(a, b, mesh_size, fine_size, growth, is_fine(a), is_fine(b))[1:])
+    return jnp.asarray(nodes, dtype=dtype)
+
+
 def _structured_2d_boundary(
     spec: LegacyBlockSpec, nx: int, ny: int
 ) -> tuple[dict[str, jax.Array], dict[str, jax.Array]]:
@@ -243,12 +292,18 @@ def _structured_2d_boundary(
 
 
 def _structured_2d_grid(
-    spec: LegacyBlockSpec, mesh_size: float, dtype: jnp.dtype
+    spec: LegacyBlockSpec, mesh_size: float, dtype: jnp.dtype, refinement: dict | None = None
 ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array, int, int]:
     x0, y0 = spec.origin
     lx, ly = spec.dimensions
-    x_vals = _axis_coordinates(x0, lx, mesh_size, dtype)
-    y_vals = _axis_coordinates(y0, ly, mesh_size, dtype)
+    if refinement:
+        graded = lambda start, length, points: _graded_axis_coordinates(
+            start, length, mesh_size, refinement["size"], refinement["growth"], points, dtype)
+        x_vals = graded(x0, lx, refinement["x_points"])
+        y_vals = graded(y0, ly, refinement["y_points"])
+    else:
+        x_vals = _axis_coordinates(x0, lx, mesh_size, dtype)
+        y_vals = _axis_coordinates(y0, ly, mesh_size, dtype)
     nx = int(x_vals.shape[0] - 1)
     ny = int(y_vals.shape[0] - 1)
     X, Y = jnp.meshgrid(x_vals, y_vals, indexing="xy")
@@ -284,8 +339,13 @@ def create_structured_quad_block(
     *,
     leading_chamfer_along_fault: float = 0.0,
     leading_chamfer_perpendicular: float = 0.0,
+    leading_fillet_radius: float = 0.0,
+    loading_fillet_radius: float = 0.0,
+    refinement: dict | None = None,
 ) -> tuple[Mesh, dict[str, jax.Array], dict[str, jax.Array]]:
-    n00, n10, n01, n11, coords, nx, ny = _structured_2d_grid(spec, mesh_size, dtype)
+    if refinement and leading_chamfer_along_fault > 0.0:
+        raise ValueError("Fault-end mesh refinement is not combined with a chamfer; use a fillet.")
+    n00, n10, n01, n11, coords, nx, ny = _structured_2d_grid(spec, mesh_size, dtype, refinement)
     elements = jnp.stack([n00, n10, n11, n01], axis=-1)
     boundary_nodes, boundary_segments = _structured_2d_boundary(spec, nx, ny)
     chamfer_length = float(leading_chamfer_along_fault)
@@ -325,6 +385,33 @@ def create_structured_quad_block(
             [boundary_nodes[interface_name][:-1], boundary_nodes[interface_name][1:]],
             axis=-1,
         )
+    if leading_fillet_radius > 0.0 or loading_fillet_radius > 0.0:
+        if chamfer_length > 0.0 and leading_fillet_radius > 0.0:
+            raise ValueError("A leading fillet and a leading chamfer are mutually exclusive.")
+        x0, y0 = spec.origin
+        lx, ly = spec.dimensions
+        if leading_fillet_radius < 0.0 or loading_fillet_radius < 0.0:
+            raise ValueError("Fillet radii must be non-negative.")
+        if max(leading_fillet_radius, loading_fillet_radius) >= lx or (
+            leading_fillet_radius + loading_fillet_radius >= ly
+        ):
+            raise ValueError("Fault-corner fillets must fit inside the block.")
+        # Quarter circles tangent to the fault face (x = x0 + lx) and to the end faces.
+        # g(y) is the recess of the fault face; mapping each row by 1 - g/lx keeps the
+        # structured topology and leaves the far (normal-loaded) face in place.
+        y = np.asarray(coords[:, 1], dtype=np.float64)
+        recess = np.zeros_like(y)
+        if leading_fillet_radius > 0.0:
+            r = leading_fillet_radius
+            d = np.clip(y - (y0 + ly - r), 0.0, r)
+            recess += r - np.sqrt(r * r - d * d)
+        if loading_fillet_radius > 0.0:
+            r = loading_fillet_radius
+            d = np.clip((y0 + r) - y, 0.0, r)
+            recess += r - np.sqrt(r * r - d * d)
+        mapped = np.asarray(coords, dtype=np.float64).copy()
+        mapped[:, 0] = x0 + (mapped[:, 0] - x0) * (1.0 - recess / lx)
+        coords = jnp.asarray(mapped, dtype=dtype)
     return Mesh(coords=coords, elements=elements), boundary_nodes, boundary_segments
 
 
@@ -466,15 +553,22 @@ def build_block_model(
     operator_batch_size: int | None = None,
     leading_chamfer_along_fault: float = 0.0,
     leading_chamfer_perpendicular: float = 0.0,
+    leading_fillet_radius: float = 0.0,
+    loading_fillet_radius: float = 0.0,
+    refinement: dict | None = None,
 ) -> BlockModel:
     if dimension == 2:
         if element_type not in {"tri3", "quad4"}:
             raise ValueError(f"Unsupported 2-D element type: {element_type}")
-        if element_type == "tri3" and (leading_chamfer_along_fault or leading_chamfer_perpendicular):
-            raise ValueError("Chamfered geometry requires quad4 elements.")
+        if element_type == "tri3" and (leading_chamfer_along_fault or leading_chamfer_perpendicular
+                                       or leading_fillet_radius or loading_fillet_radius or refinement):
+            raise ValueError("Chamfered, filleted or refined geometry requires quad4 elements.")
         mesh_factory = create_structured_quad_block if element_type == "quad4" else create_structured_tri_block
         mesh_kwargs = ({"leading_chamfer_along_fault": leading_chamfer_along_fault,
-                        "leading_chamfer_perpendicular": leading_chamfer_perpendicular}
+                        "leading_chamfer_perpendicular": leading_chamfer_perpendicular,
+                        "leading_fillet_radius": leading_fillet_radius,
+                        "loading_fillet_radius": loading_fillet_radius,
+                        "refinement": refinement}
                        if element_type == "quad4" else {})
         mesh, boundary_nodes, boundary_segments = mesh_factory(
             spec,
@@ -1059,6 +1153,17 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         origin=(case.moving.origin[0], case.moving.origin[1] - extension),
         dimensions=(case.moving.dimensions[0], case.moving.dimensions[1] + extension),
     )
+    refinement = None
+    if config.fault_end_refinement_size is not None:
+        fine = float(config.fault_end_refinement_size)
+        growth = float(config.fault_end_refinement_growth)
+        if not 0.0 < fine < float(config.mesh_size) or growth <= 1.0:
+            raise ValueError("Need 0 < fault_end_refinement_size < mesh_size and growth > 1.")
+        if extension > 0.0:
+            raise ValueError("Fault-end refinement is not combined with a moving-block extension.")
+        (mx0, my0), (mlx, mly) = case.moving.origin, case.moving.dimensions
+        refinement = {"size": fine, "growth": growth,
+                      "x_points": [mx0 + mlx], "y_points": [my0, my0 + mly]}
     moving = build_block_model(
         extended_spec,
         config.mesh_size,
@@ -1073,7 +1178,12 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         leading_chamfer_perpendicular=(
             config.moving_leading_chamfer_perpendicular
         ),
+        leading_fillet_radius=float(config.moving_leading_fault_fillet_radius),
+        loading_fillet_radius=float(config.moving_loading_fault_fillet_radius),
+        refinement=refinement,
     )
+    if extension > 0.0 and config.moving_loading_fault_fillet_radius > 0.0:
+        raise ValueError("A loading-end fillet cannot be combined with a moving-block extension.")
     stationary = build_block_model(
         case.stationary,
         config.mesh_size,
@@ -1082,6 +1192,7 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         thickness=config.thickness,
         element_type=config.element_type,
         operator_batch_size=config.operator_batch_size,
+        refinement=refinement,
     )
 
     moving_material = case.materials["moving-block"]
@@ -1202,6 +1313,13 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         stationary,
         case.simulation.master_surface,
         case.simulation.slave_surface,
+    )
+    # Normal (x) gap of each pair in the reference geometry: zero on a flat fault,
+    # positive where a fillet recesses the moving face.
+    interface_initial_gap = jnp.asarray(
+        np.asarray(stationary.mesh.coords[slave_nodes, 0], dtype=np.float64)
+        - np.asarray(moving.mesh.coords[master_nodes, 0], dtype=np.float64),
+        dtype=dtype,
     )
     mu_s_profile = build_mu_s_profile(
         moving,
@@ -1940,6 +2058,12 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         "interface_plot_master_nodes": interface_plot_master_nodes,
         "interface_plot_slave_nodes": interface_plot_slave_nodes,
         "interface_weights": interface_weights,
+        "interface_initial_gap": interface_initial_gap,
+        "moving_leading_fault_fillet_radius": float(config.moving_leading_fault_fillet_radius),
+        "moving_loading_fault_fillet_radius": float(config.moving_loading_fault_fillet_radius),
+        "fault_end_refinement_size": (None if config.fault_end_refinement_size is None
+                                      else float(config.fault_end_refinement_size)),
+        "fault_end_refinement_growth": float(config.fault_end_refinement_growth),
         "mu_s_profile": mu_s_profile,
         "mu_k_profile": mu_k_profile,
         "critical_slip_profile": critical_slip_profile,
@@ -2125,6 +2249,7 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
     force_shear_unit = model["force_shear_unit"]
     mass_flat = model["mass_flat"]
     master_nodes = model["master_nodes"]
+    interface_initial_gap = model["interface_initial_gap"]
     slave_nodes = model["slave_nodes"]
     interface_weights = model["interface_weights"]
     mu_s_profile = model["mu_s_profile"]
@@ -2281,7 +2406,9 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
     ) -> tuple[jax.Array, jax.Array, jax.Array, dict[str, jax.Array]]:
         u_moving, u_stationary = split_u(u_flat)
         v_moving, v_stationary = split_u(v_flat)
-        rel_normal = u_moving[master_nodes, 0] - u_stationary[slave_nodes, 0]
+        rel_normal = (
+            u_moving[master_nodes, 0] - u_stationary[slave_nodes, 0] - interface_initial_gap
+        )
         penetration = jnp.maximum(rel_normal, 0.0)
         in_contact = penetration > 0.0
 
@@ -2995,6 +3122,7 @@ def run_simulation_dumped(
     force_shear_unit = model["force_shear_unit"]
     mass_flat = model["mass_flat"]
     master_nodes = model["master_nodes"]
+    interface_initial_gap = model["interface_initial_gap"]
     slave_nodes = model["slave_nodes"]
     interface_weights = model["interface_weights"]
     mu_s_profile = model["mu_s_profile"]
@@ -3201,7 +3329,9 @@ def run_simulation_dumped(
         tangential_friction_active: bool,
     ) -> tuple[jax.Array, jax.Array, jax.Array, jax.Array, jax.Array]:
         u_moving, u_stationary = split_u(u_flat)
-        rel_normal = u_moving[master_nodes, 0] - u_stationary[slave_nodes, 0]
+        rel_normal = (
+            u_moving[master_nodes, 0] - u_stationary[slave_nodes, 0] - interface_initial_gap
+        )
         penetration = jnp.maximum(rel_normal, 0.0)
         in_contact = penetration > 0.0
         normal_traction = penalty_n * penetration
@@ -3252,7 +3382,9 @@ def run_simulation_dumped(
     ) -> tuple[jax.Array, jax.Array, jax.Array, dict[str, jax.Array]]:
         u_moving, u_stationary = split_u(u_flat)
         v_moving, v_stationary = split_u(v_flat)
-        rel_normal = u_moving[master_nodes, 0] - u_stationary[slave_nodes, 0]
+        rel_normal = (
+            u_moving[master_nodes, 0] - u_stationary[slave_nodes, 0] - interface_initial_gap
+        )
         penetration = jnp.maximum(rel_normal, 0.0)
         in_contact = penetration > 0.0
 
@@ -3846,7 +3978,9 @@ def run_simulation_dumped(
         """Match theta to the equilibrated interface traction before dynamics."""
         u_flat = current_carry[0]
         u_moving, u_stationary = split_u(u_flat)
-        rel_normal = u_moving[master_nodes, 0] - u_stationary[slave_nodes, 0]
+        rel_normal = (
+            u_moving[master_nodes, 0] - u_stationary[slave_nodes, 0] - interface_initial_gap
+        )
         normal_traction = penalty_n * jnp.maximum(rel_normal, 0.0)
         shear_strength = jnp.abs(current_carry[8])
         active = (normal_traction > jnp.finfo(dtype).tiny) & (
@@ -4413,6 +4547,10 @@ def run_simulation_dumped(
             h5.attrs["leading_edge_creep_relaxation_time"] = model[
                 "leading_edge_creep_relaxation_time"
             ]
+            h5.attrs["moving_leading_fault_fillet_radius"] = model["moving_leading_fault_fillet_radius"]
+            h5.attrs["moving_loading_fault_fillet_radius"] = model["moving_loading_fault_fillet_radius"]
+            h5.attrs["fault_end_refinement_size"] = float(model["fault_end_refinement_size"] or 0.0)
+            h5.attrs["fault_end_refinement_growth"] = model["fault_end_refinement_growth"]
             h5.attrs["moving_leading_chamfer_along_fault"] = model[
                 "moving_leading_chamfer_along_fault"
             ]

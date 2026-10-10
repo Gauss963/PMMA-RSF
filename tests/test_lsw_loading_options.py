@@ -180,3 +180,88 @@ def test_float64_requires_x64_instead_of_silently_truncating():
         pytest.skip("x64 already enabled in this process")
     with pytest.raises(ValueError, match="x64"):
         build_case_model(case, _short(cfg, dtype="float64"))
+
+
+def _fillet_model(cfg, case, *, radius=10.0, fine=None, mesh=5.0):
+    return build_case_model(case, replace(
+        cfg, mesh_size=mesh, time_step_override=None, fault_end_refinement_size=fine,
+        moving_leading_fault_fillet_radius=radius, moving_loading_fault_fillet_radius=radius))
+
+
+def test_fault_corner_fillets_follow_quarter_circles_and_start_with_a_gap():
+    case, cfg, _, _ = load_lsw_case(SOURCE)
+    model = _fillet_model(cfg, case, radius=10.0)
+    coords = np.asarray(model["moving"].mesh.coords, dtype=np.float64)
+    front = np.asarray(model["moving"].boundary_nodes["moving-block-front"])
+    y, x = coords[front, 1], coords[front, 0]
+    recess = np.zeros_like(y)
+    d_lead = np.clip(y - 490.0, 0.0, 10.0); d_load = np.clip(10.0 - y, 0.0, 10.0)
+    recess += 10.0 - np.sqrt(100.0 - d_lead**2) + 10.0 - np.sqrt(100.0 - d_load**2)
+    np.testing.assert_allclose(x, 200.0 - recess, atol=1e-4)
+    # Every front node is paired; the gap equals the recess and is zero off the fillets.
+    gap = np.asarray(model["interface_initial_gap"], dtype=np.float64)
+    master = np.asarray(model["master_nodes"])
+    assert master.size == front.size
+    paired_y = coords[master, 1]
+    expected = np.interp(paired_y, np.sort(y), (200.0 - x)[np.argsort(y)])
+    np.testing.assert_allclose(gap, expected, atol=1e-4)
+    assert np.all(gap[(paired_y > 10.0) & (paired_y < 490.0)] == 0.0)
+    assert gap.max() == pytest.approx(10.0, abs=1e-4)
+
+
+def test_flat_fault_has_zero_initial_gap():
+    case, cfg, _, _ = load_lsw_case(SOURCE)
+    model = build_case_model(case, _short(cfg))
+    assert np.all(np.asarray(model["interface_initial_gap"]) == 0.0)
+
+
+def test_fault_end_refinement_matches_nodes_across_the_fault():
+    case, cfg, _, _ = load_lsw_case(SOURCE)
+    coarse = _fillet_model(cfg, case, radius=0.0, fine=None)
+    model = _fillet_model(cfg, case, radius=0.0, fine=0.5)
+    moving_y = np.unique(np.asarray(model["moving"].mesh.coords)[:, 1])
+    stationary_y = np.unique(np.asarray(model["stationary"].mesh.coords)[:, 1])
+    on_fault = stationary_y[stationary_y <= 500.0 + 1e-9]
+    np.testing.assert_array_equal(moving_y, on_fault)
+    spacing = np.diff(moving_y)
+    assert spacing.min() == pytest.approx(0.5, rel=1e-6)
+    assert spacing.max() <= 5.0 + 1e-9
+    assert spacing[0] == pytest.approx(0.5, rel=1e-6) and spacing[-1] == pytest.approx(0.5, rel=1e-6)
+    x = np.unique(np.asarray(model["moving"].mesh.coords)[:, 0])
+    assert np.diff(x)[-1] == pytest.approx(0.5, rel=1e-6)
+    front = np.asarray(model["moving"].boundary_nodes["moving-block-front"])
+    assert np.asarray(model["master_nodes"]).size == front.size
+    assert len(model["moving"].mesh.elements) > len(coarse["moving"].mesh.elements)
+
+
+def test_static_normal_with_fillets_opens_the_recessed_pairs():
+    from tatva.pmma.static_normal import solve_static_normal_phase
+
+    case, cfg, _, _ = load_lsw_case(SOURCE)
+    cfg = _static_spring_cfg(cfg, mesh_size=5.0, time_step_override=None, fault_end_refinement_size=1.0,
+                             moving_leading_fault_fillet_radius=10.0, moving_loading_fault_fillet_radius=10.0)
+    model = build_case_model(case, cfg)
+    state = solve_static_normal_phase(model, cfg)
+    assert state["relative_residual"] < 1e-9
+    weights = np.asarray(model["interface_weights"], dtype=np.float64)
+    assert np.sum(weights * state["sigma_n"]) == pytest.approx(16.0 * 500.0, rel=1e-6)
+    gap = np.asarray(model["interface_initial_gap"], dtype=np.float64)
+    assert state["open_nodes"] > 0
+    assert np.all(state["sigma_n"][gap > 1.0] == 0.0)
+
+
+def test_filleted_refined_dynamics_holds_static_start(tmp_path):
+    case, cfg, _, _ = load_lsw_case(SOURCE)
+    cfg = _static_spring_cfg(cfg, mesh_size=20.0, time_step_override=None, fault_end_refinement_size=5.0,
+                             moving_leading_fault_fillet_radius=10.0, moving_loading_fault_fillet_radius=10.0)
+    result = run_simulation_dumped(case, cfg, tmp_path / "fillet.h5", frames_per_phase=4,
+                                   shear_frames_per_phase=4, include_initial_frame=True)
+    columns = list(result["columns"])
+    history = np.asarray(result["history"], dtype=np.float64)
+    assert np.all(np.isfinite(history))
+    with h5py.File(tmp_path / "fillet.h5") as h5:
+        assert h5.attrs["moving_leading_fault_fillet_radius"] == 10.0
+        assert h5.attrs["fault_end_refinement_size"] == 5.0
+        normal = h5["phase_id"][:] == 1
+    kinetic = history[normal, columns.index("kinetic_energy")]
+    assert kinetic.max() < 1e-4 * history[normal, columns.index("elastic_energy")].max()
