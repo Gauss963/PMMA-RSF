@@ -102,6 +102,16 @@ class RunConfig:
     # Spring loading through a rigid platen: the loaded face moves as one body
     # (uniform y displacement) instead of carrying a uniform spring traction.
     shear_spring_rigid_face: bool = False
+    # LSW weakening only during shear loading: the normal phase uses Coulomb friction
+    # at mu_s (slip is recorded but does not weaken), and the slip memory is cleared
+    # when shear loading starts, keeping the normal-phase stress and displacement. The
+    # fault re-strengthens during the experimental hold between normal loading and
+    # shearing.
+    reset_slip_weakening_at_shear_start: bool = False
+    # "dynamic": explicit normal ramp from rest (historical). "static": start from the
+    # static end-of-normal-loading equilibrium (tatva.pmma.static_normal), so the
+    # normal phase is only an explicit hold at full load (normal_ramp_time = 0).
+    normal_phase_mode: str = "dynamic"
     mu_k_override: float | None = None
     critical_slip_override: float | None = None
     loading_edge_nucleation_length: float = 0.0
@@ -1517,6 +1527,22 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
             "spring-displacement loading requires a positive shear_loading_stiffness."
         )
     shear_spring_rigid_face = bool(config.shear_spring_rigid_face)
+    reset_slip_weakening_at_shear_start = bool(config.reset_slip_weakening_at_shear_start)
+    normal_phase_mode = str(config.normal_phase_mode).strip().lower()
+    if normal_phase_mode not in {"dynamic", "static"}:
+        raise ValueError("normal_phase_mode must be 'dynamic' or 'static'.")
+    if normal_phase_mode == "static":
+        if config.normal_ramp_time is None or float(config.normal_ramp_time) != 0.0:
+            raise ValueError("normal_phase_mode='static' requires normal_ramp_time = 0 (full load at the start).")
+        if config.friction_law != "slip-weakening":
+            raise ValueError("normal_phase_mode='static' requires friction_law='slip-weakening'.")
+        if not reset_slip_weakening_at_shear_start:
+            raise ValueError(
+                "normal_phase_mode='static' resolves the normal phase at mu_s, so it requires "
+                "reset_slip_weakening_at_shear_start = true."
+            )
+    if reset_slip_weakening_at_shear_start and config.friction_law != "slip-weakening":
+        raise ValueError("reset_slip_weakening_at_shear_start requires friction_law='slip-weakening'.")
     if shear_spring_rigid_face and shear_loading_mode != "spring-displacement":
         raise ValueError("shear_spring_rigid_face requires shear_loading_mode='spring-displacement'.")
     shear_displacement_k = (
@@ -2046,6 +2072,8 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         "shear_ramp_shape": shear_ramp_shape,
         "shear_post_ramp_rate": shear_post_ramp_rate,
         "shear_spring_rigid_face": shear_spring_rigid_face,
+        "reset_slip_weakening_at_shear_start": reset_slip_weakening_at_shear_start,
+        "normal_phase_mode": normal_phase_mode,
         "stop_shear_loading_on_rupture": bool(
             config.stop_shear_loading_on_rupture
         ),
@@ -2393,6 +2421,8 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         diag["cum_slip"] = cum_new
         return accel, diag
 
+    if model.get("normal_phase_mode", "dynamic") != "dynamic":
+        raise NotImplementedError("normal_phase_mode='static' is implemented only in run_simulation_dumped.")
     u0 = jnp.zeros(total_dofs, dtype=dtype)
     v0 = jnp.zeros(total_dofs, dtype=dtype)
     plastic0 = jnp.zeros(master_nodes.shape[0], dtype=dtype)
@@ -2741,6 +2771,8 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         "shear_ramp_shape": model["shear_ramp_shape"],
         "shear_post_ramp_rate": model["shear_post_ramp_rate"],
         "shear_spring_rigid_face": model["shear_spring_rigid_face"],
+        "reset_slip_weakening_at_shear_start": model["reset_slip_weakening_at_shear_start"],
+        "normal_phase_mode": model["normal_phase_mode"],
         "stop_shear_loading_on_rupture": model[
             "stop_shear_loading_on_rupture"
         ],
@@ -3459,6 +3491,26 @@ def run_simulation_dumped(
     v0 = jnp.zeros(total_dofs, dtype=dtype)
     plastic0 = jnp.zeros(master_nodes.shape[0], dtype=dtype)
     cum0 = jnp.zeros(master_nodes.shape[0], dtype=dtype)
+    static_normal_summary: dict[str, Any] = {}
+    if model["normal_phase_mode"] == "static" and not resume:
+        from .static_normal import solve_static_normal_phase
+
+        static_state = solve_static_normal_phase(model, config)
+        u0 = jnp.asarray(static_state["u"], dtype=dtype)
+        plastic0 = jnp.asarray(static_state["plastic_slip"], dtype=dtype)
+        # The static state is resolved with the undamaged strength mu_s, so its end
+        # slip must not count as weakening slip (it would drop those nodes to mu_k and
+        # set them sliding at once). Keep the plastic offset, start the memory at zero.
+        static_normal_summary = {
+            "iterations": static_state["iterations"],
+            "relative_residual": static_state["relative_residual"],
+            "sliding_nodes": static_state["sliding_nodes"],
+            "open_nodes": static_state["open_nodes"],
+            "max_tau_over_sigma": float(static_state["tau_over_sigma"].max()),
+            "max_cumulative_slip": float(static_state["cumulative_slip"].max()),
+            "mean_sigma_n": float(static_state["sigma_n"].mean()),
+            "loading_face_displacement": static_state["loading_face_displacement"],
+        }
     rsf_state0 = jnp.broadcast_to(
         rsf_parameters["initial_state"], master_nodes.shape
     ).astype(state_dtype)
@@ -3585,11 +3637,12 @@ def run_simulation_dumped(
             state_for_acceleration = jnp.where(
                 tangential_friction_active, evolved_state, rsf_state
             )
+        weakening_active = allow_loading_stop or not model["reset_slip_weakening_at_shear_start"]
         accel, diag = acceleration(
             u_new,
             v_half,
             plastic_slip,
-            cum_slip,
+            cum_slip if weakening_active else jnp.zeros_like(cum_slip),
             state_for_acceleration,
             normal_scale,
             shear_traction,
@@ -3599,6 +3652,10 @@ def run_simulation_dumped(
             zero_dofs,
             prescribed_dofs,
         )
+        if not weakening_active:
+            # Strength saw zero memory (Coulomb at mu_s); keep the slip record itself.
+            diag["cum_slip"] = cum_slip + diag["cum_slip"]
+            diag["max_slip"] = jnp.max(diag["cum_slip"])
         velocity_trial = v_half + dt * accel
         if apply_normal_relaxation:
             relaxation_factor = jnp.where(
@@ -4269,6 +4326,12 @@ def run_simulation_dumped(
             h5.attrs["shear_ramp_shape"] = model["shear_ramp_shape"]
             h5.attrs["shear_post_ramp_rate"] = model["shear_post_ramp_rate"]
             h5.attrs["shear_spring_rigid_face"] = int(model["shear_spring_rigid_face"])
+            h5.attrs["reset_slip_weakening_at_shear_start"] = int(
+                model["reset_slip_weakening_at_shear_start"]
+            )
+            h5.attrs["normal_phase_mode"] = model["normal_phase_mode"]
+            for name, value in static_normal_summary.items():
+                h5.attrs[f"static_normal_{name}"] = value
             h5.attrs["normal_loading_mode"] = model["normal_loading_mode"]
             h5.attrs["shear_loading_mode"] = model["shear_loading_mode"]
             h5.attrs["shear_force_boundary"] = model["shear_force_boundary"]
@@ -4882,6 +4945,16 @@ def run_simulation_dumped(
                     mpi_context, interval_due, deadline_reached, checkpoint_requested["value"]
                 )
                 phase_complete = stop == int(simulation_stops[-1])
+                if phase_complete and phase_id == 1 and model["reset_slip_weakening_at_shear_start"]:
+                    # carry[3] is the cumulative slip that sets the LSW strength; the
+                    # plastic slip (stress-free tangential offset) and stresses are kept.
+                    if mpi_context.is_root:
+                        erased = np.asarray(carry[3])
+                        h5.attrs["slip_weakening_reset_max_cumulative_slip"] = float(erased.max())
+                        h5.attrs["slip_weakening_reset_nodes_above_dc"] = int(
+                            np.count_nonzero(erased >= np.asarray(critical_slip_profile))
+                        )
+                    carry = (*carry[:3], jnp.zeros_like(carry[3]), *carry[4:])
                 if phase_complete and phase_id == 1 and normal_relaxation:
                     rsf_handoff_values = None
                     if (
@@ -5115,6 +5188,8 @@ def run_simulation_dumped(
         "shear_ramp_shape": model["shear_ramp_shape"],
         "shear_post_ramp_rate": model["shear_post_ramp_rate"],
         "shear_spring_rigid_face": model["shear_spring_rigid_face"],
+        "reset_slip_weakening_at_shear_start": model["reset_slip_weakening_at_shear_start"],
+        "normal_phase_mode": model["normal_phase_mode"],
         "stop_shear_loading_on_rupture": model[
             "stop_shear_loading_on_rupture"
         ],

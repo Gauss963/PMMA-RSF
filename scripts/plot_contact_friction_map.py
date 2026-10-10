@@ -135,7 +135,7 @@ def _add_rupture_speed_fit(
     *,
     fit_start: float = RUPTURE_FIT_START_MM,
     fit_end: float,
-    excluded_zone: str = "VS",
+    excluded_zone: str | None = "VS",
 ) -> None:
     """Overlay sparse D_c arrivals and their pre-VS (or pre-creep) linear fit."""
     if not bool(fit["available"]):
@@ -173,8 +173,9 @@ def _add_rupture_speed_fit(
         0.975,
         0.965,
         (
-            rf"Rupture fit, {fit_start:.0f}-{fit_end:.1f} mm ({excluded_zone} excluded)"
-            "\n"
+            rf"Rupture fit, {fit_start:.0f}-{fit_end:.1f} mm"
+            + (f" ({excluded_zone} excluded)" if excluded_zone else "")
+            + "\n"
             rf"$\Delta\delta=D_c$: "
             rf"$v_r={float(fit['speed_m_per_s']):.1f}$ m s$^{{-1}}$"
             "\n"
@@ -558,7 +559,11 @@ def plot_mu_eff_maps(
         rupture_arrival_sorted,
         rupture_fit,
         fit_end=rupture_fit_end,
-        excluded_zone="creep" if leading_creep_start is not None else "VS",
+        excluded_zone=(
+            "creep" if leading_creep_start is not None
+            else "VS" if leading_vs_start is not None
+            else None
+        ),
     )
     _add_wave_speed_guides(
         ax_shear,
