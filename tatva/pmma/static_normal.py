@@ -88,7 +88,10 @@ def solve_static_normal_phase(model: dict[str, Any], config, *, max_iterations: 
     weights = np.asarray(model["interface_weights"], dtype=np.float64)
     kn = float(model["penalty_n"])
     kt = np.asarray(model["penalty_t"], dtype=np.float64)
-    mu_s = np.asarray(model["mu_s_profile"], dtype=np.float64)
+    # Static strength of the (healed) fault: mu_k + h (mu_s - mu_k).
+    healing = float(model.get("healing_fraction", 1.0))
+    mu_k = np.asarray(model["mu_k_profile"], dtype=np.float64)
+    mu_s = mu_k + healing * (np.asarray(model["mu_s_profile"], dtype=np.float64) - mu_k)
     mx, my = 2 * master, 2 * master + 1
     sx, sy = offset + 2 * slave, offset + 2 * slave + 1
     force = np.asarray(model["force_normal"], dtype=np.float64)

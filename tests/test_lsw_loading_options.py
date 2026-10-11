@@ -348,3 +348,32 @@ def test_contact_time_step_is_per_pair_only_on_refined_meshes():
     assert float(refined["dt_contact"]) == pytest.approx(per_pair, rel=1e-6)
     free = np.setdiff1d(np.arange(masses.size), np.asarray(refined["fixed_dofs"]))
     assert per_pair > 0.25 * np.sqrt(masses[free].min() / float(refined["penalty_n"]) / weights.max())
+
+
+def test_partial_healing_sets_strength_and_remaining_weakening(tmp_path):
+    from tatva.pmma.static_normal import solve_static_normal_phase
+
+    case, cfg, _, _ = load_lsw_case(SOURCE)
+    case = replace(case, friction=replace(case.friction, mu_s=0.25, mu_k=0.15))
+    cfg = _static_spring_cfg(cfg, healing_fraction=0.5, shear_displacement_s_override=0.0)
+    model = build_case_model(case, cfg)
+    state = solve_static_normal_phase(model, cfg)
+    assert state["tau_over_sigma"].max() == pytest.approx(0.20, abs=1e-6)  # ends slide at the healed strength
+    run_simulation_dumped(case, cfg, tmp_path / "heal.h5", frames_per_phase=4,
+                          shear_frames_per_phase=4, include_initial_frame=True)
+    with h5py.File(tmp_path / "heal.h5") as h5:
+        assert h5.attrs["healing_fraction"] == 0.5
+        first_shear = int(np.flatnonzero(h5["phase_id"][:] == 2)[0])
+        mu = h5["interface/friction_coefficient"][first_shear]
+        dc = h5["interface/critical_slip_profile"][:]
+        memory = h5["interface/cumulative_slip"][first_shear]
+    np.testing.assert_allclose(mu, 0.20, atol=1e-6)
+    np.testing.assert_allclose(memory, 0.5 * dc, rtol=1e-5)
+
+
+def test_healing_fraction_validation():
+    case, cfg, _, _ = load_lsw_case(SOURCE)
+    with pytest.raises(ValueError, match="healing_fraction"):
+        build_case_model(case, _short(cfg, healing_fraction=0.0, reset_slip_weakening_at_shear_start=True))
+    with pytest.raises(ValueError, match="reset_slip_weakening_at_shear_start"):
+        build_case_model(case, _short(cfg, healing_fraction=0.5))

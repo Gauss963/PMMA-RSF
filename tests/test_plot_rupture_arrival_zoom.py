@@ -17,7 +17,7 @@ from plot_rupture_arrival_zoom import (  # noqa: E402
 )
 
 
-def _write_synthetic_lsw_dump(path, speed_m_per_s=900.0, creep_from_mm=None):
+def _write_synthetic_lsw_dump(path, speed_m_per_s=900.0, creep_from_mm=None, friction_law="slip-weakening"):
     """Front leaves y=0 at 2 ms; slip ramps at 2 m/s behind it; loading stops at 2.5 ms."""
     dt = 1.0e-6
     pressure_steps = 100
@@ -31,7 +31,7 @@ def _write_synthetic_lsw_dump(path, speed_m_per_s=900.0, creep_from_mm=None):
     critical_slip = np.full(y.shape, 0.01)
     columns = ["time", "shear_loading_stopped"]
     with h5py.File(path, "w") as h5:
-        h5.attrs.update(dt=dt, pressure_steps=pressure_steps, friction_law="slip-weakening",
+        h5.attrs.update(dt=dt, pressure_steps=pressure_steps, friction_law=friction_law,
                         young_modulus=7662.0, poisson_ratio=0.2, density=1.148e-9)
         coords = np.stack([np.full(y.shape, 200.0), y], axis=1)
         h5["moving/coords"] = coords
@@ -82,7 +82,8 @@ def test_zoom_recovers_front_speed_stop_and_writes_outputs(tmp_path):
     assert saved["fit_interval_mm"] == [200.0, 500.0]
     assert saved["leading_creep_start_mm"] is None
     assert abs(saved["shear_loading_stop_first_saved_ms"] - 2.5) <= 1e-3 + 1e-9
-    for name in ("slip_dc", "rate_100", "rate_500", "rate_1000"):
+    assert list(saved["arrivals"]) == ["slip_dc"]  # LSW: D_c crossing only
+    for name in ("slip_dc",):
         arrival = saved["arrivals"][name]
         assert arrival["fit_available"]
         # Saved frames are 2 us apart, so allow one frame of bias across 300 mm.
@@ -100,3 +101,12 @@ def test_zoom_fit_stops_before_lsw_creep_zone(tmp_path):
 
     assert summary["leading_creep_start_mm"] == 480.0
     assert summary["fit_interval_mm"] == [200.0, 475.0]
+
+
+def test_rate_state_dump_also_tracks_slip_rate_thresholds(tmp_path):
+    dump = tmp_path / "simulation.h5"
+    _write_synthetic_lsw_dump(dump, speed_m_per_s=900.0, friction_law="rate-state-regularized")
+    summary = plot_rupture_arrival_zoom(dump, tmp_path / "zoom.pdf", tmp_path, dpi=80)
+    assert set(summary["arrivals"]) == {"slip_dc", "rate_100", "rate_500", "rate_1000"}
+    for arrival in summary["arrivals"].values():
+        assert abs(arrival["speed_m_per_s"] - 900.0) < 10.0

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Zoom the shear-phase friction map onto the rupture and overlay multi-threshold arrivals.
+"""Zoom the shear-phase friction map onto the rupture and overlay the front arrivals.
 
 The full mu_eff_map_phase_split view spans the whole shear window, so a front that
 crosses the fault in a fraction of a millisecond collapses into a near-horizontal
@@ -126,13 +126,17 @@ def plot_rupture_arrival_zoom(
         base = max(int(shear[0]) - 1, 0)
         slip = np.asarray(interface["cumulative_slip"][base:shear[-1] + 1], dtype=np.float64)[:, order]
         slip_time = np.concatenate([[0.0], time_ms]) if base < shear[0] else time_ms
-        rate = np.asarray(interface["slip_rate"][shear[0]:shear[-1] + 1], dtype=np.float64)[:, order]
+        # Slip-rate thresholds suit rate-and-state fronts; an LSW front is defined by
+        # the D_c crossing alone, so they are only drawn for RSF dumps.
+        rate_state = str(h5.attrs.get("friction_law", "slip-weakening")).startswith("rate-state")
+        rate = (np.asarray(interface["slip_rate"][shear[0]:shear[-1] + 1], dtype=np.float64)[:, order]
+                if rate_state else None)
         columns = [c.decode() if isinstance(c, bytes) else str(c) for c in h5["history_columns"][:]]
         stopped = np.asarray(h5["history"][shear[0]:shear[-1] + 1, columns.index("shear_loading_stopped")]) > 0.5
         wave_speeds = _read_wave_speeds(input_path, h5)
 
         arrivals = {"slip_dc": _first_slip_distance_crossing(slip, slip_time, critical_slip)}
-        for threshold in SLIP_RATE_THRESHOLDS_MM_PER_S:
+        for threshold in SLIP_RATE_THRESHOLDS_MM_PER_S if rate_state else ():
             arrivals[f"rate_{int(threshold)}"] = first_threshold_crossing(rate, time_ms, threshold)
         del slip, rate
         auto_start, auto_end = automatic_window(arrivals, float(time_ms[-1]))
@@ -202,7 +206,7 @@ def plot_rupture_arrival_zoom(
         "arrival_definitions": {
             "slip_dc": "first post-shear cumulative slip increment = local D_c (interpolated)",
             **{f"rate_{int(t)}": f"first saved |slip rate| >= {t / 1000:g} m/s"
-               for t in SLIP_RATE_THRESHOLDS_MM_PER_S},
+               for t in (SLIP_RATE_THRESHOLDS_MM_PER_S if rate_state else ())},
         },
         "arrivals": {},
     }

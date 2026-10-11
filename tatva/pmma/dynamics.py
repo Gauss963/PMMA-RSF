@@ -120,6 +120,10 @@ class RunConfig:
     # fault re-strengthens during the experimental hold between normal loading and
     # shearing.
     reset_slip_weakening_at_shear_start: bool = False
+    # Fraction h of the strength drop restored by that healing: strength becomes
+    # mu_k + h (mu_s - mu_k) and full weakening needs h * D_c more slip, i.e. the slip
+    # memory restarts at (1 - h) D_c instead of 0. h = 1 is full healing.
+    healing_fraction: float = 1.0
     # "dynamic": explicit normal ramp from rest (historical). "static": start from the
     # static end-of-normal-loading equilibrium (tatva.pmma.static_normal), so the
     # normal phase is only an explicit hold at full load (normal_ramp_time = 0).
@@ -1698,6 +1702,11 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         )
     shear_spring_rigid_face = bool(config.shear_spring_rigid_face)
     reset_slip_weakening_at_shear_start = bool(config.reset_slip_weakening_at_shear_start)
+    healing_fraction = float(config.healing_fraction)
+    if not 0.0 < healing_fraction <= 1.0:
+        raise ValueError("healing_fraction must be in (0, 1].")
+    if healing_fraction < 1.0 and not reset_slip_weakening_at_shear_start:
+        raise ValueError("healing_fraction < 1 needs reset_slip_weakening_at_shear_start = true.")
     normal_phase_mode = str(config.normal_phase_mode).strip().lower()
     if normal_phase_mode not in {"dynamic", "static"}:
         raise ValueError("normal_phase_mode must be 'dynamic' or 'static'.")
@@ -2271,6 +2280,7 @@ def build_case_model(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         "shear_post_ramp_rate": shear_post_ramp_rate,
         "shear_spring_rigid_face": shear_spring_rigid_face,
         "reset_slip_weakening_at_shear_start": reset_slip_weakening_at_shear_start,
+        "healing_fraction": healing_fraction,
         "normal_phase_mode": normal_phase_mode,
         "restart_state": restart_state,
         "stop_shear_loading_on_rupture": bool(
@@ -2974,6 +2984,7 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         "shear_post_ramp_rate": model["shear_post_ramp_rate"],
         "shear_spring_rigid_face": model["shear_spring_rigid_face"],
         "reset_slip_weakening_at_shear_start": model["reset_slip_weakening_at_shear_start"],
+        "healing_fraction": model["healing_fraction"],
         "normal_phase_mode": model["normal_phase_mode"],
         "stop_shear_loading_on_rupture": model[
             "stop_shear_loading_on_rupture"
@@ -3701,6 +3712,8 @@ def run_simulation_dumped(
     plastic0 = jnp.zeros(master_nodes.shape[0], dtype=dtype)
     cum0 = jnp.zeros(master_nodes.shape[0], dtype=dtype)
     static_normal_summary: dict[str, Any] = {}
+    # Slip memory of a healed fault: 0 for full healing, (1 - h) D_c for partial.
+    healed_memory = ((1.0 - model["healing_fraction"]) * critical_slip_profile).astype(dtype)
     if model["normal_phase_mode"] == "static" and not resume:
         from .static_normal import solve_static_normal_phase
 
@@ -3859,7 +3872,7 @@ def run_simulation_dumped(
             u_new,
             v_half,
             plastic_slip,
-            cum_slip if weakening_active else jnp.zeros_like(cum_slip),
+            cum_slip if weakening_active else healed_memory,
             state_for_acceleration,
             normal_scale,
             shear_traction,
@@ -3870,8 +3883,9 @@ def run_simulation_dumped(
             prescribed_dofs,
         )
         if not weakening_active:
-            # Strength saw zero memory (Coulomb at mu_s); keep the slip record itself.
-            diag["cum_slip"] = cum_slip + diag["cum_slip"]
+            # Strength saw the healed memory (Coulomb at the healed strength); keep the
+            # slip record itself.
+            diag["cum_slip"] = cum_slip + (diag["cum_slip"] - healed_memory)
             diag["max_slip"] = jnp.max(diag["cum_slip"])
         velocity_trial = v_half + dt * accel
         if apply_normal_relaxation:
@@ -4549,6 +4563,7 @@ def run_simulation_dumped(
                 model["reset_slip_weakening_at_shear_start"]
             )
             h5.attrs["normal_phase_mode"] = model["normal_phase_mode"]
+            h5.attrs["healing_fraction"] = model["healing_fraction"]
             if model["restart_state"] is not None:
                 h5.attrs["restart_from_file"] = model["restart_state"]["source"]
                 h5.attrs["restart_actuator_displacement"] = model["restart_state"]["actuator"]
@@ -5182,7 +5197,7 @@ def run_simulation_dumped(
                         h5.attrs["slip_weakening_reset_nodes_above_dc"] = int(
                             np.count_nonzero(erased >= np.asarray(critical_slip_profile))
                         )
-                    carry = (*carry[:3], jnp.zeros_like(carry[3]), *carry[4:])
+                    carry = (*carry[:3], healed_memory, *carry[4:])
                 if phase_complete and phase_id == 1 and normal_relaxation:
                     rsf_handoff_values = None
                     if (
@@ -5427,6 +5442,7 @@ def run_simulation_dumped(
         "shear_post_ramp_rate": model["shear_post_ramp_rate"],
         "shear_spring_rigid_face": model["shear_spring_rigid_face"],
         "reset_slip_weakening_at_shear_start": model["reset_slip_weakening_at_shear_start"],
+        "healing_fraction": model["healing_fraction"],
         "normal_phase_mode": model["normal_phase_mode"],
         "stop_shear_loading_on_rupture": model[
             "stop_shear_loading_on_rupture"
