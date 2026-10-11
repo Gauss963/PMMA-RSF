@@ -2612,8 +2612,10 @@ def run_simulation(case: LegacyCase, config: RunConfig) -> dict[str, Any]:
         loading_face_displacement = jnp.mean(u_flat[moving_shear_loading_dofs])
         shear_traction = jnp.where(
             use_shear_spring,
+            # The platen only pushes: once the block slides ahead of it the gap
+            # opens and the spring carries no tension.
             shear_loading_stiffness
-            * (actuator_displacement - loading_face_displacement),
+            * jnp.maximum(actuator_displacement - loading_face_displacement, 0.0),
             scheduled_shear_traction,
         )
         force_ext = normal_scale * force_normal + shear_traction * force_shear_unit
@@ -3638,8 +3640,10 @@ def run_simulation_dumped(
         loading_face_displacement = jnp.mean(u_flat[moving_shear_loading_dofs])
         shear_traction = jnp.where(
             use_shear_spring,
+            # The platen only pushes: once the block slides ahead of it the gap
+            # opens and the spring carries no tension.
             shear_loading_stiffness
-            * (actuator_displacement - loading_face_displacement),
+            * jnp.maximum(actuator_displacement - loading_face_displacement, 0.0),
             scheduled_shear_traction,
         )
         force_ext = normal_scale * force_normal + shear_traction * force_shear_unit

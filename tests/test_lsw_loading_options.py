@@ -377,3 +377,18 @@ def test_healing_fraction_validation():
         build_case_model(case, _short(cfg, healing_fraction=0.0, reset_slip_weakening_at_shear_start=True))
     with pytest.raises(ValueError, match="reset_slip_weakening_at_shear_start"):
         build_case_model(case, _short(cfg, healing_fraction=0.5))
+
+
+def test_platen_spring_pushes_but_never_pulls(tmp_path):
+    case, cfg, _, _ = load_lsw_case(SOURCE)
+    # Retract the actuator well past the face: the platen must lift off, not pull.
+    cfg = _static_spring_cfg(cfg, shear_displacement_s_override=-0.5)
+    result = run_simulation_dumped(case, cfg, tmp_path / "liftoff.h5", frames_per_phase=4,
+                                   shear_frames_per_phase=16, include_initial_frame=True)
+    columns = list(result["columns"])
+    history = np.asarray(result["history"], dtype=np.float64)
+    force = history[:, columns.index("shear_boundary_reaction")]
+    with h5py.File(tmp_path / "liftoff.h5") as h5:
+        last_normal = int(np.flatnonzero(h5["phase_id"][:] == 1)[-1])
+    assert force.min() >= 0.0
+    assert force[last_normal] > 0.0 and force[-1] == 0.0  # pushing after normal load, lifted off at the end
