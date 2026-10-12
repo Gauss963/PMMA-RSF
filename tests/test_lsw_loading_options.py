@@ -392,3 +392,17 @@ def test_platen_spring_pushes_but_never_pulls(tmp_path):
         last_normal = int(np.flatnonzero(h5["phase_id"][:] == 1)[-1])
     assert force.min() >= 0.0
     assert force[last_normal] > 0.0 and force[-1] == 0.0  # pushing after normal load, lifted off at the end
+
+
+def test_benchmark_mode_runs_cases_without_a_timestep_override(tmp_path):
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [sys.executable, str(root / "scripts/run_lsw_case.py"),
+         str(root / "cases/lsw_q4_h05_chamfer_gap7_mus030_muk030.toml"),
+         "--benchmark-steps", "10", "--mesh-size", "8", "--run-dir", str(tmp_path / "run")],
+        capture_output=True, text=True, cwd=root)
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "run/data/simulation.h5").exists()

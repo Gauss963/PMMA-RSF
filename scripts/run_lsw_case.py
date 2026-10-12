@@ -54,8 +54,12 @@ def main():
     if args.benchmark_steps < 0:
         raise ValueError("benchmark-steps must be nonnegative")
     if args.benchmark_steps:
-        duration = args.benchmark_steps * cfg.time_step_override
-        cfg = replace(cfg, normal_phase_time=duration, normal_ramp_time=duration,
+        dt = cfg.time_step_override
+        if dt is None:
+            dt = float(build_case_model(case, cfg)["dt"])
+        duration = args.benchmark_steps * dt
+        cfg = replace(cfg, normal_phase_time=duration,
+                      normal_ramp_time=0.0 if cfg.normal_phase_mode == "static" else duration,
                       shear_phase_time=duration, shear_ramp_time=duration)
         output = dict(output, frames_per_phase=max(2, math.ceil(args.benchmark_steps / 667)),
                       shear_frames_per_phase=max(2, math.ceil(args.benchmark_steps / 25)))
