@@ -1,0 +1,73 @@
+# Uniform LSW, 0.5 mm Quad4, mu_k/mu_s = 0.15: chamfered (20 x 5 mm) leading corner,
+# shear platen 7 mm short of the fault on a 25 MPa/mm push-only rigid-platen spring,
+# static normal start, slip weakening only during shear. 2 mm pilots: ratio 0.10 is
+# supershear (~1.5 C_s), 0.15 turns supershear near y ~ 400 mm, 0.20 stays near C_R.
+[case]
+name = "lsw-q4-h05-chamfer-gap7-mus0.30-muk0.045"
+reference = "docs/note.md (2026-10-12): mu_k/mu_s scan with a 7 mm platen gap"
+
+[geometry.moving]
+origin = [0.0, 0.0]
+dimensions = [200.0, 500.0]
+
+[geometry.stationary]
+origin = [200.0, 0.0]
+dimensions = [145.0, 550.0]
+
+[material]
+density = 1.148e-9
+young_modulus = 7662.0
+poisson_ratio = 0.2
+
+[friction]
+mu_s = 0.30
+mu_k = 0.045
+d_c = 0.016059772 # scaled with mu_s - mu_k so X_c stays ~13.9 mm
+
+[solver]
+mesh_size = 0.5
+element_type = "quad4"
+moving_leading_chamfer_along_fault = 20.0
+moving_leading_chamfer_perpendicular = 5.0
+simulation_time = 0.02
+cfl = 0.35
+dtype = "float64"
+normal_penalty = 76620.0
+tangential_penalty = 7662.0
+contact_safety_factor = 0.25  # dt from the stability bound (no override)
+friction_law = "slip-weakening"
+normal_loading_mode = "stress"
+normal_stress_override = 16.0
+normal_phase_mode = "static"
+normal_phase_time = 0.002  # explicit hold after the static normal solve
+normal_ramp_time = 0.0
+reset_slip_weakening_at_shear_start = true
+shear_loading_mode = "spring-displacement"
+shear_loading_stiffness = 25.0  # K ~ 250 kN/mm (t0151/t0153 events) over a 200 x 50 mm face
+shear_spring_rigid_face = true
+shear_loading_face_gap = 7.0
+shear_displacement_k_override = 0.0
+shear_displacement_s_override = 0.45  # fast stage ends at ~85% of the ~0.53 mm failure displacement
+shear_ramp_time = 0.01
+shear_ramp_shape = "half-cosine"
+shear_post_ramp_rate = 20.0  # slow stage; ~8 um of actuator travel per 0.4 ms rupture
+shear_phase_time = 0.02
+tau_k_start_fraction_override = 1.0
+tau_k_full_fraction_override = 1.0
+lock_shear_edge_during_normal = false
+relax_tangential_contact_during_normal = false
+stop_shear_loading_on_rupture = true
+shear_loading_stop_coverage_fraction = 1.0
+shear_loading_stop_min_y = 0.0
+shear_loading_stop_max_y = 480.0
+
+[output]
+frames_per_phase = 20
+shear_frames_per_phase = 2000            # bulk every 10 us
+interface_frames_per_phase = 20
+shear_interface_frames_per_phase = 20000 # interface every 1 us
+include_initial_frame = false
+compression = "lzf"
+store_bulk_strain = false
+store_bulk_velocity = true
+checkpoint_interval_seconds = 600.0
