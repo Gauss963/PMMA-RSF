@@ -35,7 +35,8 @@ fi
 end=${SLURM_JOB_END_TIME:-$(date -d "$(squeue -h -j "$SLURM_JOB_ID" -o %e)" +%s)}
 limit=$((end - $(date +%s) - 600))
 [[ $limit -gt 0 ]]
-mpirun -np "$SLURM_NTASKS" --map-by "package:PE=$OMP_NUM_THREADS" --bind-to core \
+# Shared nodes (cf112) may hand out cores from both sockets, so map by slot, not package.
+mpirun -np "$SLURM_NTASKS" --map-by "slot:PE=$OMP_NUM_THREADS" --bind-to core \
   "$PYTHON" "$ROOT/scripts/run_lsw_case.py" \
   "$CASE" \
   --run-dir "$RUN_DIR" --time-limit-seconds "$limit" "${args[@]}"
