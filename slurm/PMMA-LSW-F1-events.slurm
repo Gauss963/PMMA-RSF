@@ -41,16 +41,24 @@ else
   placement=(--map-by "package:PE=$OMP_NUM_THREADS" --bind-to core)
 fi
 mkdir -p "$RUN_DIR"
+# Optional GAP (mm) overrides shear_loading_face_gap in both cases.
+gap_edit=()
+if [[ -n "${GAP:-}" ]]; then
+  grep -q '^shear_loading_face_gap = ' "$CASE" || { echo "CASE has no shear_loading_face_gap" >&2; exit 1; }
+  gap_edit=(-e "s/^shear_loading_face_gap = .*/shear_loading_face_gap = $GAP/"
+            -e "/^name = /s/-gap[0-9.]*-/-gap$GAP-/")
+fi
 for ((e = 1; e <= EVENTS; e++)); do
   dir="$RUN_DIR/ev$e"
   if grep -qs '"completed"' "$dir/status.json"; then
     echo "ev$e already completed"; continue
   fi
+  case_file="$RUN_DIR/ev$e.toml"
   if ((e == 1)); then
-    case_file=$CASE
+    sed ${gap_edit[@]+"${gap_edit[@]}"} -e '' "$CASE" > "$case_file"
   else
-    case_file="$RUN_DIR/ev$e.toml"
-    sed "s#^restart_from_file = \"PREVIOUS_EVENT\"\$#restart_from_file = \"$RUN_DIR/ev$((e - 1))/data/simulation.h5\"#" \
+    sed ${gap_edit[@]+"${gap_edit[@]}"} \
+      -e "s#^restart_from_file = \"PREVIOUS_EVENT\"\$#restart_from_file = \"$RUN_DIR/ev$((e - 1))/data/simulation.h5\"#" \
       "$RESTART_CASE" > "$case_file"
   fi
   args=()
